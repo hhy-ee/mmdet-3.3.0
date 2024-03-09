@@ -15,6 +15,7 @@ from mmdet.models.utils import empty_instances
 from mmdet.registry import MODELS
 from mmdet.structures.bbox import bbox_overlaps
 
+EPS = 1e-5
 
 @MODELS.register_module()
 class MultiInstanceBBoxHead(BBoxHead):
@@ -56,6 +57,7 @@ class MultiInstanceBBoxHead(BBoxHead):
 
     def __init__(self,
                  num_instance: int = 2,
+                 with_vpd: bool = False,
                  with_refine: bool = False,
                  num_shared_convs: int = 0,
                  num_shared_fcs: int = 2,
@@ -68,6 +70,8 @@ class MultiInstanceBBoxHead(BBoxHead):
                  init_cfg: Optional[Union[dict, ConfigDict]] = None,
                  *args,
                  **kwargs) -> None:
+        if with_vpd:
+            self.loss_dist_cfg = kwargs.pop('loss_dist')
         super().__init__(*args, init_cfg=init_cfg, **kwargs)
         assert (num_shared_convs + num_shared_fcs + num_cls_convs +
                 num_cls_fcs + num_reg_convs + num_reg_fcs > 0)
@@ -87,6 +91,7 @@ class MultiInstanceBBoxHead(BBoxHead):
         self.num_reg_fcs = num_reg_fcs
         self.conv_out_channels = conv_out_channels
         self.fc_out_channels = fc_out_channels
+        self.with_vpd = with_vpd
         self.with_refine = with_refine
 
         # add shared convs and fcs
@@ -97,6 +102,9 @@ class MultiInstanceBBoxHead(BBoxHead):
         self.shared_out_channels = last_layer_dim
         self.relu = nn.ReLU(inplace=True)
 
+        if self.with_vpd:
+            self.fc_std = nn.ModuleList()
+            
         if self.with_refine:
             refine_model_cfg = {
                 'type': 'Linear',
@@ -157,6 +165,8 @@ class MultiInstanceBBoxHead(BBoxHead):
                 reg_predictor_cfg_.update(
                     in_features=self.reg_last_dim[k], out_features=out_dim_reg)
                 self.fc_reg.append(MODELS.build(reg_predictor_cfg_))
+                if self.with_vpd:
+                    self.fc_std.append(MODELS.build(reg_predictor_cfg_))
                 if self.with_refine:
                     self.fc_reg_ref.append(MODELS.build(reg_predictor_cfg_))
 
@@ -253,6 +263,8 @@ class MultiInstanceBBoxHead(BBoxHead):
         # separate branches
         cls_score = list()
         bbox_pred = list()
+        if self.with_vpd:
+            bbox_lstd = list()
         for k in range(self.num_instance):
             for conv in self.cls_convs[k]:
                 x_cls = conv(x_cls)
@@ -274,6 +286,8 @@ class MultiInstanceBBoxHead(BBoxHead):
 
             cls_score.append(self.fc_cls[k](x_cls) if self.with_cls else None)
             bbox_pred.append(self.fc_reg[k](x_reg) if self.with_reg else None)
+            if self.with_vpd:
+                bbox_lstd.append(self.fc_std[k](x_reg) if self.with_reg else None)
 
         if self.with_refine:
             x_ref = x
@@ -297,7 +311,10 @@ class MultiInstanceBBoxHead(BBoxHead):
 
         cls_score = torch.cat(cls_score, dim=1)
         bbox_pred = torch.cat(bbox_pred, dim=1)
-
+        if self.with_vpd:
+            bbox_lstd = torch.cat(bbox_lstd, dim=1)
+            return cls_score, bbox_pred, bbox_lstd
+        
         return cls_score, bbox_pred
 
     def get_targets(self,
@@ -411,13 +428,26 @@ class MultiInstanceBBoxHead(BBoxHead):
             dict: A dictionary of loss.
         """
         losses = dict()
+        if self.with_vpd:
+            bbox_lstd = bbox_pred[1]
+            bbox_pred = bbox_pred[0]
         if bbox_pred.numel():
-            loss_0 = self.emd_loss(bbox_pred[:, 0:4], cls_score[:, 0:2],
-                                   bbox_pred[:, 4:8], cls_score[:, 2:4],
-                                   bbox_targets, labels)
-            loss_1 = self.emd_loss(bbox_pred[:, 4:8], cls_score[:, 2:4],
-                                   bbox_pred[:, 0:4], cls_score[:, 0:2],
-                                   bbox_targets, labels)
+            if self.with_vpd:
+                loss_0 = self.emd_vpd_loss(
+                    bbox_pred[:, 0:4], cls_score[:, 0:2], bbox_lstd[:, 0:4],
+                    bbox_pred[:, 4:8], cls_score[:, 2:4], bbox_lstd[:, 4:8],
+                    bbox_targets, labels)
+                loss_1 = self.emd_vpd_loss(
+                    bbox_pred[:, 4:8], cls_score[:, 2:4], bbox_lstd[:, 4:8],
+                    bbox_pred[:, 0:4], cls_score[:, 0:2], bbox_lstd[:, 0:4],
+                    bbox_targets, labels)
+            else:
+                loss_0 = self.emd_loss(bbox_pred[:, 0:4], cls_score[:, 0:2],
+                                    bbox_pred[:, 4:8], cls_score[:, 2:4],
+                                    bbox_targets, labels)
+                loss_1 = self.emd_loss(bbox_pred[:, 4:8], cls_score[:, 2:4],
+                                    bbox_pred[:, 0:4], cls_score[:, 0:2],
+                                    bbox_targets, labels)
             loss = torch.cat([loss_0, loss_1], dim=1)
             _, min_indices = loss.min(dim=1)
             loss_emd = loss[torch.arange(loss.shape[0]), min_indices]
@@ -487,6 +517,117 @@ class MultiInstanceBBoxHead(BBoxHead):
         loss_cls[fg_masks] = loss_cls[fg_masks] + loss_bbox
         loss = loss_cls.reshape(-1, 2).sum(dim=1)
         return loss.reshape(-1, 1)
+
+    def emd_vpd_loss(self, bbox_pred_0: Tensor, cls_score_0: Tensor, bbox_lstd_0: Tensor,
+                 bbox_pred_1: Tensor, cls_score_1: Tensor, bbox_lstd_1: Tensor, targets: Tensor,
+                 labels: Tensor) -> Tensor:
+        """Calculate the emd loss.
+
+        Note:
+            This implementation is modified from https://github.com/Purkialo/
+            CrowdDet/blob/master/lib/det_oprs/loss_opr.py
+
+        Args:
+            bbox_pred_0 (Tensor): Part of regression prediction results, has
+                shape (batch_size * num_proposals_single_image, 4), the last
+                dimension 4 represents [tl_x, tl_y, br_x, br_y].
+            cls_score_0 (Tensor): Part of classification prediction results,
+                has shape (batch_size * num_proposals_single_image,
+                (num_classes + 1)), where 1 represents the background.
+            bbox_pred_1 (Tensor): The other part of regression prediction
+                results, has shape (batch_size*num_proposals_single_image, 4).
+            cls_score_1 (Tensor):The other part of classification prediction
+                results, has shape (batch_size * num_proposals_single_image,
+                (num_classes + 1)).
+            targets (Tensor):Regression target for all proposals in a
+                batch, has shape (batch_size * num_proposals_single_image,
+                4 * k), the last dimension 4 represents [tl_x, tl_y, br_x,
+                br_y], k represents the number of prediction boxes generated
+                by each proposal box.
+            labels (Tensor): Gt_labels for all proposals in a batch, has
+                shape (batch_size * num_proposals_single_image, k).
+
+        Returns:
+            torch.Tensor: The calculated loss.
+        """
+        # variational inference
+        bbox_mean_0 = bbox_pred_0
+        bbox_mean_1 = bbox_pred_1
+        bbox_pred_0 = bbox_mean_0 + bbox_lstd_0.exp() * torch.randn_like(bbox_mean_0)
+        bbox_pred_1 = bbox_mean_1 + bbox_lstd_1.exp() * torch.randn_like(bbox_mean_1)
+        
+        # process
+        bbox_pred = torch.cat([bbox_pred_0, bbox_pred_1],
+                              dim=1).reshape(-1, bbox_pred_0.shape[-1])
+        cls_score = torch.cat([cls_score_0, cls_score_1],
+                              dim=1).reshape(-1, cls_score_0.shape[-1])
+        bbox_mean = torch.cat([bbox_mean_0, bbox_mean_1],
+                              dim=1).reshape(-1, bbox_mean_0.shape[-1])
+        bbox_lstd = torch.cat([bbox_lstd_0, bbox_lstd_1],
+                              dim=1).reshape(-1, bbox_lstd_0.shape[-1])
+        bbox_dist = torch.cat([bbox_mean, bbox_lstd], axis=1)
+        targets = targets.reshape(-1, 4)
+        labels = labels.long().flatten()
+
+        # masks
+        valid_masks = labels >= 0
+        fg_masks = labels > 0
+
+        # multiple class
+        bbox_pred = bbox_pred.reshape(-1, self.num_classes, 4)
+        bbox_dist = bbox_dist.reshape(-1, self.num_classes, 8)
+        fg_gt_classes = labels[fg_masks]
+        bbox_pred = bbox_pred[fg_masks, fg_gt_classes - 1, :]
+        bbox_dist = bbox_dist[fg_masks, fg_gt_classes - 1, :]
+        
+        # loss for regression
+        loss_bbox = self.loss_bbox(bbox_pred, targets[fg_masks])
+        loss_bbox = loss_bbox.sum(dim=1)
+
+        # loss for classification
+        labels = labels * valid_masks
+        loss_cls = self.loss_cls(cls_score, labels)
+        
+        # loss for regularization
+        loss_dist = self.regularization_loss(
+            bbox_dist, targets[fg_masks],
+            self.loss_dist_cfg['type'], self.loss_dist_cfg['project'],
+            self.loss_dist_cfg['scale_alpha'], self.loss_dist_cfg['skew_beta'])
+        loss_dist = loss_dist.sum(dim=1)
+        
+        loss_cls[fg_masks] = loss_cls[fg_masks] + loss_bbox + loss_dist
+        loss = loss_cls.reshape(-1, 2).sum(dim=1)
+        return loss.reshape(-1, 1)
+    
+    def regularization_loss(self, dist, target, metric, project, scale_alpha, skew_beta):
+        project = np.linspace(project[0], project[1], project[2])
+        scale = (project.shape[0] - 1) / (project[-1] - project[0])
+        acc = 1 / scale / 2
+        target = (target.reshape(-1) - project[0]) * scale
+        target = target.clamp(min=EPS, max=(project[-1]-project[0]) * scale-EPS)
+        idx_left = target.long()
+        idx_right = idx_left + 1
+        weight_left = idx_right.float() - target
+        weight_right = target - idx_left.float()
+        # target distribution
+        target_dist = weight_left.new_full((weight_left.shape[0], \
+            project.shape[0]), 0, dtype=torch.float32)
+        target_dist[torch.arange(target_dist.shape[0]), idx_left] = weight_left
+        target_dist[torch.arange(target_dist.shape[0]), idx_right] = weight_right
+        # predict distribution
+        mean= dist[:, :4].reshape(-1, 1)
+        lstd= dist[:, 4:].reshape(-1, 1)
+        Qg = torch.distributions.normal.Normal(mean, lstd.exp())
+        project = torch.tensor(project).type_as(mean).repeat(mean.shape[0],1)
+        pred_dist = Qg.cdf(project + acc) - Qg.cdf(project - acc)
+        # distribution distance
+        if metric == 'JD':
+            total_dist = pred_dist * (1 - skew_beta) + target_dist * skew_beta
+            kl_p = pred_dist * torch.log((pred_dist + 1e-6) / (total_dist + 1e-6))
+            total_dist = pred_dist * skew_beta  + target_dist * (1 - skew_beta)
+            kl_q = target_dist * torch.log((target_dist + 1e-6) / (total_dist + 1e-6))
+            loss = (kl_p + kl_q) / 2
+        return loss.sum(axis=-1).reshape(-1, 4) * scale_alpha
 
     def _predict_by_feat_single(
             self,

@@ -61,6 +61,7 @@ model = dict(
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
             type='MultiInstanceBBoxHead',
+            with_vpd=True,
             with_refine=False,
             num_shared_fcs=2,
             in_channels=256,
@@ -78,7 +79,10 @@ model = dict(
                 use_sigmoid=False,
                 reduction='none'),
             loss_bbox=dict(
-                type='SmoothL1Loss', loss_weight=1.0, reduction='none'))),
+                type='SmoothL1Loss', loss_weight=1.0, reduction='none'),
+            loss_dist=dict(
+                type='JD', project=(-2, 2, 41), 
+                scale_alpha=1.5, skew_beta=0.2, reduction='none'))),
     # model training and testing settings
     train_cfg=dict(
         rpn=dict(
@@ -205,7 +209,7 @@ val_evaluator = dict(
     backend_args=backend_args)
 test_evaluator = val_evaluator
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=30, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 param_scheduler = [
@@ -214,14 +218,14 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=30,
+        end=50,
         by_epoch=True,
-        milestones=[24, 27],
+        milestones=[44, 47],
         gamma=0.1)
 ]
 
 # optimizer
-auto_scale_lr = dict(base_batch_size=16)
+auto_scale_lr = dict(base_batch_size=2)
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001))
+    optimizer=dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001))
