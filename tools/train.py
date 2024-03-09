@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import os.path as osp
 
 from mmengine.config import Config, DictAction
@@ -50,7 +51,9 @@ def parse_args():
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
-    args = parser.parse_args()
+    # args = parser.parse_args()
+    args = parser.parse_args(['./configs/crowddet/crowddet-rcnn_r50_fpn_lr5e-3.py',
+                              '--work-dir', './exp/crowddet/crowddet-rcnn_r50_fpn_lr5e-3'])
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
