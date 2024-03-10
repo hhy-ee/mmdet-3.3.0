@@ -209,7 +209,7 @@ val_evaluator = dict(
     backend_args=backend_args)
 test_evaluator = val_evaluator
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=30, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 param_scheduler = [
@@ -218,9 +218,9 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=50,
+        end=30,
         by_epoch=True,
-        milestones=[44, 47],
+        milestones=[24, 27],
         gamma=0.1)
 ]
 
