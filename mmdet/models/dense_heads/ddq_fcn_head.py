@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn.functional as F
 from mmengine.config import ConfigDict
+from mmengine.structures import InstanceData
 from mmengine.model import bias_init_with_prob, normal_init
 from torch import nn
 from torch import Tensor
@@ -13,8 +14,9 @@ from mmcv.cnn import ConvModule, Scale
 from mmcv.ops import batched_nms
 
 from mmdet.registry import MODELS
+from mmdet.utils import InstanceList
 from mmdet.structures import SampleList
-from mmdet.structures.bbox import distance2bbox
+from mmdet.structures.bbox import (distance2bbox, bbox_cxcywh_to_xyxy)
 
 from .anchor_free_head import AnchorFreeHead
 from ..losses import DDQAuxLoss
@@ -37,10 +39,7 @@ class DDQFCNHead(AnchorFreeHead):
                     beta=2.0,
                     loss_weight=1.0),
                 loss_bbox=dict(type='GIoULoss', loss_weight=2.0),
-                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner',
-                                             topk=8),
-                               alpha=1,
-                               beta=6),
+                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=8), alpha=1, beta=6),
             ),
             main_loss=ConfigDict(
                 loss_cls=dict(
@@ -50,10 +49,7 @@ class DDQFCNHead(AnchorFreeHead):
                     beta=2.0,
                     loss_weight=1.0),
                 loss_bbox=dict(type='GIoULoss', loss_weight=2.0),
-                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner',
-                                             topk=1),
-                               alpha=1,
-                               beta=6),
+                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=1), alpha=1, beta=6),
             ),
             shuffle_channles=64,
             dqs_cfg=dict(type='nms', iou_threshold=0.7, nms_pre=1000),
@@ -116,21 +112,36 @@ class DDQFCNHead(AnchorFreeHead):
         pass
     
     def loss(self, x: Tuple[Tensor], batch_data_samples: SampleList) -> dict:
+        
+        loss = dict()
         main_results, aux_results = self.forward(x)
         
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs
-        
         main_loss_inputs, aux_loss_inputs = self.get_inputs(
             main_results, aux_results, img_metas=batch_img_metas)
         
-        aux_loss = self.aux_loss(*aux_loss_inputs,
-                                 gt_bboxes=gt_bboxes,
-                                 gt_labels=gt_labels,
-                                 img_metas=img_metas)
+        aux_loss = self.aux_loss.loss(*aux_loss_inputs,
+            gt_bboxes=[item.bboxes for item in batch_gt_instances],
+            gt_labels=[item.labels for item in batch_gt_instances],
+            img_metas=batch_img_metas)
         
-        pass
+        for k, v in aux_loss.items():
+            loss[f'aux_{k}'] = v
+            
+        main_loss = self.main_loss.loss(*main_loss_inputs,
+            gt_bboxes=[item.bboxes for item in batch_gt_instances],
+            gt_labels=[item.labels for item in batch_gt_instances],
+            img_metas=batch_img_metas)
+        
+        loss.update(main_loss)
+        
+        loss['num_proposal'] = torch.as_tensor(
+            sum([len(item) for item in main_loss_inputs[0]
+                 ])).cuda().float() / len(main_loss_inputs[0])
+        
+        return loss
     
     def _init_layers(self):
         self.inter_convs = nn.ModuleList()
@@ -282,48 +293,57 @@ class DDQFCNHead(AnchorFreeHead):
             aux_results = None
         return main_results, aux_results
 
-    def forward_train(self,
-                      x,
-                      img_metas,
-                      gt_bboxes,
-                      gt_labels=None,
-                      gt_bboxes_ignore=None,
-                      **kwargs):
-        loss = dict()
-        main_results, aux_results = self.forward(x)
-        main_loss_inputs, aux_loss_inputs = self.get_inputs(
-            main_results, aux_results, img_metas=img_metas)
-
-        aux_loss = self.aux_loss(*aux_loss_inputs,
-                                 gt_bboxes=gt_bboxes,
-                                 gt_labels=gt_labels,
-                                 img_metas=img_metas)
-        for k, v in aux_loss.items():
-            loss[f'aux_{k}'] = v
-
-        main_loss = self.main_loss(*main_loss_inputs,
-                                   gt_bboxes=gt_bboxes,
-                                   gt_labels=gt_labels,
-                                   img_metas=img_metas)
-
-        loss.update(main_loss)
-
-        loss['num_proposal'] = torch.as_tensor(
-            sum([len(item) for item in main_loss_inputs[0]
-                 ])).cuda().float() / len(main_loss_inputs[0])
-
-        return loss
-
-    def simple_test(self, x, img_metas, **kwargs):
-
-        main_results, aux_results = self.forward(x)
+    def predict_by_feat(self,
+                        main_results: List[List],
+                        aux_results: List[List],
+                        batch_img_metas: List[dict],
+                        rescale: bool = True) -> InstanceList:
+        
         main_outs, _ = self.get_inputs(main_results,
                                        aux_results,
-                                       img_metas=img_metas)
+                                       img_metas=batch_img_metas)
+        
+        result_list = self.get_bboxes(*main_outs, batch_img_metas)
+        return result_list
 
-        results_list = self.get_bboxes(*main_outs, img_metas)
-        return results_list
+    def _predict_by_feat_single(self,
+                                cls_score: Tensor,
+                                bbox_pred: Tensor,
+                                img_meta: dict,
+                                rescale: bool = True) -> InstanceData:
+        
+        assert len(cls_score) == len(bbox_pred)  # num_queries
+        max_per_img = self.test_cfg.get('max_per_img', len(cls_score))
+        img_shape = img_meta['img_shape']
+        # exclude background
+        if self.loss_cls.use_sigmoid:
+            cls_score = cls_score.sigmoid()
+            scores, indexes = cls_score.view(-1).topk(max_per_img)
+            det_labels = indexes % self.num_classes
+            bbox_index = indexes // self.num_classes
+            bbox_pred = bbox_pred[bbox_index]
+        else:
+            scores, det_labels = F.softmax(cls_score, dim=-1)[..., :-1].max(-1)
+            scores, bbox_index = scores.topk(max_per_img)
+            bbox_pred = bbox_pred[bbox_index]
+            det_labels = det_labels[bbox_index]
 
+        det_bboxes = bbox_cxcywh_to_xyxy(bbox_pred)
+        det_bboxes[:, 0::2] = det_bboxes[:, 0::2] * img_shape[1]
+        det_bboxes[:, 1::2] = det_bboxes[:, 1::2] * img_shape[0]
+        det_bboxes[:, 0::2].clamp_(min=0, max=img_shape[1])
+        det_bboxes[:, 1::2].clamp_(min=0, max=img_shape[0])
+        if rescale:
+            assert img_meta.get('scale_factor') is not None
+            det_bboxes /= det_bboxes.new_tensor(
+                img_meta['scale_factor']).repeat((1, 2))
+
+        results = InstanceData()
+        results.bboxes = det_bboxes
+        results.scores = scores
+        results.labels = det_labels
+        return results
+    
     def get_inputs(self, main_results, aux_results, img_metas=None):
 
         mlvl_score = main_results['cls_scores_list']
@@ -444,7 +464,7 @@ class DDQFCNHead(AnchorFreeHead):
             single_bbox_pred[:, 0::2].clamp_(min=0, max=img_shape[1])
             single_bbox_pred[:, 1::2].clamp_(min=0, max=img_shape[0])
             single_bbox_pred = single_bbox_pred / single_bbox_pred.new_tensor(
-                img_meta['scale_factor'])
+                img_meta['scale_factor']*2)
             sinlge_score = sinlge_score.flatten(0, 1)
             num_distinct_queries = min(self.num_distinct_queries,
                                        len(sinlge_score))
@@ -452,8 +472,10 @@ class DDQFCNHead(AnchorFreeHead):
                 num_distinct_queries, sorted=True)
             labels_per_img = topk_indices % self.num_classes
             bboxes = single_bbox_pred[topk_indices // self.num_classes]
-            bboxes = torch.cat([bboxes, scores_per_img[:, None]], dim=1)
 
-            result_list.append((bboxes[:num_distinct_queries],
-                                labels_per_img[:num_distinct_queries]))
+            results = InstanceData()
+            results.bboxes = bboxes
+            results.scores = scores_per_img
+            results.labels = labels_per_img
+        result_list.append(results)
         return result_list

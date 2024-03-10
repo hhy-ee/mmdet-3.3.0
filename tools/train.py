@@ -52,10 +52,10 @@ def parse_args():
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     # args = parser.parse_args()
-    # args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_30e_crowdhuman.py',
-    #                           '--work-dir', './exp/ddq/ddq_fcn_r50_30e_crowdhuman'])
-    args = parser.parse_args(['./configs/fcos/fcos_test.py',
+    args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_30e_crowdhuman.py',
                               '--work-dir', './exp/ddq/ddq_fcn_r50_30e_crowdhuman'])
+    # args = parser.parse_args(['./configs/fcos/fcos_test.py',
+    #                           '--work-dir', './exp/ddq/ddq_fcn_r50_30e_crowdhuman'])
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
