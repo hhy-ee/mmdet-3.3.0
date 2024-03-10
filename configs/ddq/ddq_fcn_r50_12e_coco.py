@@ -5,6 +5,12 @@ _base_ = [
 
 model = dict(
     type='SingleStageDetector',
+    data_preprocessor=dict(
+        type='DetDataPreprocessor',
+        mean=[123.675, 116.28, 103.53],
+        std=[58.395, 57.12, 57.375],
+        bgr_to_rgb=True,
+        pad_size_divisor=32),
     backbone=dict(
         type='ResNet',
         depth=50,
@@ -38,6 +44,7 @@ model = dict(
                         requires_grad=True)))
 
 # optimizer
+train_dataloader = dict(batch_size=16, num_workers=16)
 optimizer = dict(_delete_=True, type='AdamW', lr=1e-4 * 0.5, weight_decay=0.1)
 
 auto_scale_lr = dict(base_batch_size=16)
