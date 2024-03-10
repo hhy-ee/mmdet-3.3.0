@@ -44,8 +44,7 @@ model = dict(
         in_channels=256,
         norm_cfg=dict(type='GN',
                         num_groups=32,
-                        requires_grad=True)),
-    test_cfg=dict(max_per_img=500))
+                        requires_grad=True)))
 
 dataset_type = 'CrowdHumanDataset'
 data_root = 'data/CrowdHuman/'
@@ -142,7 +141,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # training schedule for 2x
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=30, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -157,9 +156,9 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=36,
+        end=30,
         by_epoch=True,
-        milestones=[24, 33],
+        milestones=[24, 27],
         gamma=0.1)
 ]
 
