@@ -52,8 +52,8 @@ def parse_args():
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     # args = parser.parse_args()
-    args = parser.parse_args(['./configs/crowddet/crowddet_vpd_JD_p2_40_a1.0_b0.1.py',
-                              '--work-dir', './exp/crowddet/crowddet_vpd_JD_p2_40_a1.0_b0.1'])
+    args = parser.parse_args(['./configs/crowddet/crowddet_vpd_JD_p2_40_a1.0_b0.3.py',
+                              '--work-dir', './exp/crowddet/crowddet_vpd_JD_p2_40_a1.0_b0.3'])
     # args.resume = './exp/crowddet/crowddet_vpd_JD_a1.0_b0.2/epoch_24.pth'
     # args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_12e_coco.py',
     #                           '--work-dir', './exp/ddq/ddq_fcn_r50_12e_coco'])
