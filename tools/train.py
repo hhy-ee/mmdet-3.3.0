@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import os.path as osp
 
 from mmengine.config import Config, DictAction
@@ -52,11 +52,11 @@ def parse_args():
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     # args = parser.parse_args()
+    args = parser.parse_args(['./configs/crowddet/crowddet_vpd_JD_a1.5_b0.2.py',
+                              '--work-dir', './exp/crowddet/crowddet_vpd_JD_a1.5_b0.2'])
+    # args.resume = './exp/crowddet/crowddet_vpd_JD_a1.0_b0.2/epoch_24.pth'
     # args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_12e_coco.py',
     #                           '--work-dir', './exp/ddq/ddq_fcn_r50_12e_coco'])
-    # args.resume = './exp/ddq/ddq-detr-3x_crowdhuman/epoch_9.pth'
-    args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_12e_coco.py',
-                              '--work-dir', './exp/ddq/ddq_fcn_r50_12e_coco'])
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 

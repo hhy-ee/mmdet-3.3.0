@@ -81,7 +81,7 @@ model = dict(
             loss_bbox=dict(
                 type='SmoothL1Loss', loss_weight=1.0, reduction='none'),
             loss_dist=dict(
-                type='JD', project=(-2, 2, 41), 
+                type='JD', project=(-1, 1, 21), 
                 scale_alpha=1.0, skew_beta=0.2, reduction='none'))),
     # model training and testing settings
     train_cfg=dict(
