@@ -35,7 +35,7 @@ model = dict(
             nms_pre=1000,
         ),
         strides=(8, 16, 32, 64, 128),
-        num_classes=1,
+        num_classes=80,
         in_channels=256,
         norm_cfg=dict(type='GN',
                         num_groups=32,
