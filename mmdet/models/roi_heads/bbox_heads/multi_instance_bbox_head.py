@@ -57,7 +57,7 @@ class MultiInstanceBBoxHead(BBoxHead):
 
     def __init__(self,
                  num_instance: int = 2,
-                 with_vpd: bool = False,
+                 with_2s_vpd: bool = False,
                  with_refine: bool = False,
                  num_shared_convs: int = 0,
                  num_shared_fcs: int = 2,
@@ -70,7 +70,7 @@ class MultiInstanceBBoxHead(BBoxHead):
                  init_cfg: Optional[Union[dict, ConfigDict]] = None,
                  *args,
                  **kwargs) -> None:
-        if with_vpd:
+        if 'loss_dist' in kwargs:
             self.loss_dist_cfg = kwargs.pop('loss_dist')
         super().__init__(*args, init_cfg=init_cfg, **kwargs)
         assert (num_shared_convs + num_shared_fcs + num_cls_convs +
@@ -91,7 +91,7 @@ class MultiInstanceBBoxHead(BBoxHead):
         self.num_reg_fcs = num_reg_fcs
         self.conv_out_channels = conv_out_channels
         self.fc_out_channels = fc_out_channels
-        self.with_vpd = with_vpd
+        self.with_2s_vpd = with_2s_vpd
         self.with_refine = with_refine
 
         # add shared convs and fcs
@@ -102,16 +102,24 @@ class MultiInstanceBBoxHead(BBoxHead):
         self.shared_out_channels = last_layer_dim
         self.relu = nn.ReLU(inplace=True)
 
-        if self.with_vpd:
+        if self.with_2s_vpd:
             self.fc_std = nn.ModuleList()
             
         if self.with_refine:
-            refine_model_cfg = {
-                'type': 'Linear',
-                'in_features': self.shared_out_channels + 20,
-                'out_features': self.shared_out_channels
-            }
-            self.shared_fcs_ref = MODELS.build(refine_model_cfg)
+            if self.with_2s_vpd:
+                refine_model_cfg = {
+                    'type': 'Linear',
+                    'in_features': self.shared_out_channels + 36,
+                    'out_features': self.shared_out_channels
+                }
+                self.shared_fcs_ref = MODELS.build(refine_model_cfg)
+            else:
+                refine_model_cfg = {
+                    'type': 'Linear',
+                    'in_features': self.shared_out_channels + 20,
+                    'out_features': self.shared_out_channels
+                }
+                self.shared_fcs_ref = MODELS.build(refine_model_cfg)
             self.fc_cls_ref = nn.ModuleList()
             self.fc_reg_ref = nn.ModuleList()
 
@@ -165,7 +173,7 @@ class MultiInstanceBBoxHead(BBoxHead):
                 reg_predictor_cfg_.update(
                     in_features=self.reg_last_dim[k], out_features=out_dim_reg)
                 self.fc_reg.append(MODELS.build(reg_predictor_cfg_))
-                if self.with_vpd:
+                if self.with_2s_vpd:
                     self.fc_std.append(MODELS.build(reg_predictor_cfg_))
                 if self.with_refine:
                     self.fc_reg_ref.append(MODELS.build(reg_predictor_cfg_))
@@ -263,7 +271,7 @@ class MultiInstanceBBoxHead(BBoxHead):
         # separate branches
         cls_score = list()
         bbox_pred = list()
-        if self.with_vpd:
+        if self.with_2s_vpd:
             bbox_lstd = list()
         for k in range(self.num_instance):
             for conv in self.cls_convs[k]:
@@ -286,7 +294,7 @@ class MultiInstanceBBoxHead(BBoxHead):
 
             cls_score.append(self.fc_cls[k](x_cls) if self.with_cls else None)
             bbox_pred.append(self.fc_reg[k](x_reg) if self.with_reg else None)
-            if self.with_vpd:
+            if self.with_2s_vpd:
                 bbox_lstd.append(self.fc_std[k](x_reg) if self.with_reg else None)
 
         if self.with_refine:
@@ -295,8 +303,12 @@ class MultiInstanceBBoxHead(BBoxHead):
             bbox_pred_ref = list()
             for k in range(self.num_instance):
                 feat_ref = cls_score[k].softmax(dim=-1)
-                feat_ref = torch.cat((bbox_pred[k], feat_ref[:, 1][:, None]),
-                                     dim=1).repeat(1, 4)
+                if self.with_2s_vpd:
+                    feat_ref = torch.cat((bbox_pred[k], bbox_lstd[k], 
+                                feat_ref[:, 1][:, None]), dim=1).repeat(1, 4)
+                else:
+                    feat_ref = torch.cat((bbox_pred[k], feat_ref[:, 1][:, None]),
+                                        dim=1).repeat(1, 4)
                 feat_ref = torch.cat((x_ref, feat_ref), dim=1)
                 feat_ref = F.relu_(self.shared_fcs_ref(feat_ref))
 
@@ -307,11 +319,16 @@ class MultiInstanceBBoxHead(BBoxHead):
             bbox_pred = torch.cat(bbox_pred, dim=1)
             cls_score_ref = torch.cat(cls_score_ref, dim=1)
             bbox_pred_ref = torch.cat(bbox_pred_ref, dim=1)
+
+            if self.with_2s_vpd:
+                bbox_lstd = torch.cat(bbox_lstd, dim=1)
+                return cls_score, bbox_pred, bbox_lstd, cls_score_ref, bbox_pred_ref
+            
             return cls_score, bbox_pred, cls_score_ref, bbox_pred_ref
 
         cls_score = torch.cat(cls_score, dim=1)
         bbox_pred = torch.cat(bbox_pred, dim=1)
-        if self.with_vpd:
+        if self.with_2s_vpd:
             bbox_lstd = torch.cat(bbox_lstd, dim=1)
             return cls_score, bbox_pred, bbox_lstd
         
@@ -428,11 +445,11 @@ class MultiInstanceBBoxHead(BBoxHead):
             dict: A dictionary of loss.
         """
         losses = dict()
-        if self.with_vpd:
+        if self.with_2s_vpd:
             bbox_lstd = bbox_pred[1]
             bbox_pred = bbox_pred[0]
         if bbox_pred.numel():
-            if self.with_vpd:
+            if self.with_2s_vpd:
                 loss_0 = self.emd_vpd_loss(
                     bbox_pred[:, 0:4], cls_score[:, 0:2], bbox_lstd[:, 0:4],
                     bbox_pred[:, 4:8], cls_score[:, 2:4], bbox_lstd[:, 4:8],

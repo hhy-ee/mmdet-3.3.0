@@ -55,14 +55,23 @@ class MultiInstanceRoIHead(StandardRoIHead):
         bbox_results = self.bbox_head(bbox_feats)
 
         if self.bbox_head.with_refine:
-            bbox_results = dict(
-                cls_score=bbox_results[0],
-                bbox_pred=bbox_results[1],
-                cls_score_ref=bbox_results[2],
-                bbox_pred_ref=bbox_results[3],
-                bbox_feats=bbox_feats)
+            if self.bbox_head.with_2s_vpd:
+                bbox_results = dict(
+                    cls_score=bbox_results[0],
+                    bbox_pred=bbox_results[1],
+                    bbox_lstd=bbox_results[2],
+                    cls_score_ref=bbox_results[3],
+                    bbox_pred_ref=bbox_results[4],
+                    bbox_feats=bbox_feats)
+            else:
+                bbox_results = dict(
+                    cls_score=bbox_results[0],
+                    bbox_pred=bbox_results[1],
+                    cls_score_ref=bbox_results[2],
+                    bbox_pred_ref=bbox_results[3],
+                    bbox_feats=bbox_feats)
         else:
-            if self.bbox_head.with_vpd:
+            if self.bbox_head.with_2s_vpd:
                 bbox_results = dict(
                     cls_score=bbox_results[0],
                     bbox_pred=bbox_results[1],
@@ -98,9 +107,13 @@ class MultiInstanceRoIHead(StandardRoIHead):
 
         # If there is a refining process, add refine loss.
         if 'cls_score_ref' in bbox_results:
+            if self.bbox_head.with_2s_vpd:
+                bbox_pred = (bbox_results['bbox_pred'], bbox_results['bbox_lstd'])
+            else:
+                bbox_pred = bbox_results['bbox_pred']
             bbox_loss_and_target = self.bbox_head.loss_and_target(
                 cls_score=bbox_results['cls_score'],
-                bbox_pred=bbox_results['bbox_pred'],
+                bbox_pred=bbox_pred,
                 rois=rois,
                 sampling_results=sampling_results,
                 rcnn_train_cfg=self.train_cfg)
@@ -114,7 +127,7 @@ class MultiInstanceRoIHead(StandardRoIHead):
             bbox_results['loss_bbox']['loss_rcnn_emd_ref'] = \
                 bbox_loss_and_target_ref['loss_bbox']['loss_rcnn_emd']
         else:
-            if self.bbox_head.with_vpd:
+            if self.bbox_head.with_2s_vpd:
                 bbox_pred = (bbox_results['bbox_pred'], bbox_results['bbox_lstd'])
             else:
                 bbox_pred = bbox_results['bbox_pred']

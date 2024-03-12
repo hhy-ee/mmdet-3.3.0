@@ -34,11 +34,15 @@ class RPNHead(AnchorHead):
 
     def __init__(self,
                  in_channels: int,
+                 with_1s_vpd: bool = False,
                  num_classes: int = 1,
                  init_cfg: MultiConfig = dict(
                      type='Normal', layer='Conv2d', std=0.01),
                  num_convs: int = 1,
                  **kwargs) -> None:
+        if 'loss_dist' in kwargs:
+            self.loss_dist_cfg = kwargs.pop('loss_dist')
+        self.with_1s_vpd = with_1s_vpd
         self.num_convs = num_convs
         assert num_classes == 1
         super().__init__(
@@ -76,6 +80,10 @@ class RPNHead(AnchorHead):
         reg_dim = self.bbox_coder.encode_size
         self.rpn_reg = nn.Conv2d(self.feat_channels,
                                  self.num_base_priors * reg_dim, 1)
+        
+        if self.with_1s_vpd:
+            self.rpn_std = nn.Conv2d(self.feat_channels,
+                                 self.num_base_priors * reg_dim, 1)
 
     def forward_single(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """Forward feature of a single scale level.
@@ -94,6 +102,9 @@ class RPNHead(AnchorHead):
         x = F.relu(x)
         rpn_cls_score = self.rpn_cls(x)
         rpn_bbox_pred = self.rpn_reg(x)
+        if self.with_1s_vpd:
+            rpn_bbox_lstd = self.rpn_std(x)
+            return rpn_cls_score, (rpn_bbox_pred, rpn_bbox_lstd)
         return rpn_cls_score, rpn_bbox_pred
 
     def loss_by_feat(self,

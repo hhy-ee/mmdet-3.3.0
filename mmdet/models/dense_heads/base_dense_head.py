@@ -254,6 +254,9 @@ class BaseDenseHead(BaseModule, metaclass=ABCMeta):
             with_score_factors = True
             assert len(cls_scores) == len(score_factors)
 
+        if self.with_1s_vpd:
+            bbox_preds = [item[0] for item in bbox_preds]
+
         num_levels = len(cls_scores)
 
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]

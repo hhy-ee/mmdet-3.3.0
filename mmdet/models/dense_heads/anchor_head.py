@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import warnings
+import numpy as np
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -17,6 +18,7 @@ from ..task_modules.samplers import PseudoSampler
 from ..utils import images_to_levels, multi_apply, unmap
 from .base_dense_head import BaseDenseHead
 
+EPS = 1e-5
 
 @MODELS.register_module()
 class AnchorHead(BaseDenseHead):
@@ -450,20 +452,65 @@ class AnchorHead(BaseDenseHead):
         target_dim = bbox_targets.size(-1)
         bbox_targets = bbox_targets.reshape(-1, target_dim)
         bbox_weights = bbox_weights.reshape(-1, target_dim)
+
+        if self.with_1s_vpd:
+            bbox_pred, bbox_lstd = bbox_pred
+            bbox_lstd = bbox_lstd.permute(0, 2, 3,1).reshape(-1,self.bbox_coder.encode_size)
+
         bbox_pred = bbox_pred.permute(0, 2, 3,
                                       1).reshape(-1,
                                                  self.bbox_coder.encode_size)
-        if self.reg_decoded_bbox:
-            # When the regression loss (e.g. `IouLoss`, `GIouLoss`)
-            # is applied directly on the decoded bounding boxes, it
-            # decodes the already encoded coordinates to absolute format.
-            anchors = anchors.reshape(-1, anchors.size(-1))
-            bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
-            bbox_pred = get_box_tensor(bbox_pred)
-        loss_bbox = self.loss_bbox(
-            bbox_pred, bbox_targets, bbox_weights, avg_factor=avg_factor)
+        if self.with_1s_vpd:
+            fg_masks = bbox_weights > 0
+            loss_bbox = self.loss_bbox(
+                bbox_pred[fg_masks], bbox_targets[fg_masks], avg_factor=avg_factor)
+            loss_dist = self.regularization_loss(
+                bbox_pred[fg_masks], bbox_lstd[fg_masks], bbox_targets[fg_masks],
+                self.loss_dist_cfg['type'], self.loss_dist_cfg['project'],
+                self.loss_dist_cfg['scale_alpha'], self.loss_dist_cfg['skew_beta'], avg_factor)
+            loss_bbox = loss_bbox + loss_dist
+        else:
+            if self.reg_decoded_bbox:
+                # When the regression loss (e.g. `IouLoss`, `GIouLoss`)
+                # is applied directly on the decoded bounding boxes, it
+                # decodes the already encoded coordinates to absolute format.
+                anchors = anchors.reshape(-1, anchors.size(-1))
+                bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
+                bbox_pred = get_box_tensor(bbox_pred)
+            loss_bbox = self.loss_bbox(
+                bbox_pred, bbox_targets, bbox_weights, avg_factor=avg_factor)
         return loss_cls, loss_bbox
 
+    def regularization_loss(self, mean, lstd, target, metric, project, scale_alpha, skew_beta, avg_factor):
+        project = np.linspace(project[0], project[1], project[2])
+        scale = (project.shape[0] - 1) / (project[-1] - project[0])
+        acc = 1 / scale / 2
+        target = (target.reshape(-1) - project[0]) * scale
+        target = target.clamp(min=EPS, max=(project[-1]-project[0]) * scale-EPS)
+        idx_left = target.long()
+        idx_right = idx_left + 1
+        weight_left = idx_right.float() - target
+        weight_right = target - idx_left.float()
+        # target distribution
+        target_dist = weight_left.new_full((weight_left.shape[0], \
+            project.shape[0]), 0, dtype=torch.float32)
+        target_dist[torch.arange(target_dist.shape[0]), idx_left] = weight_left
+        target_dist[torch.arange(target_dist.shape[0]), idx_right] = weight_right
+        # predict distribution
+        mean, lstd= mean.reshape(-1, 1), lstd.reshape(-1, 1)
+        Qg = torch.distributions.normal.Normal(mean, lstd.exp())
+        project = torch.tensor(project).type_as(mean).repeat(mean.shape[0],1)
+        pred_dist = Qg.cdf(project + acc) - Qg.cdf(project - acc)
+        # distribution distance
+        if metric == 'JD':
+            total_dist = pred_dist * (1 - skew_beta) + target_dist * skew_beta
+            kl_p = pred_dist * torch.log((pred_dist + 1e-6) / (total_dist + 1e-6))
+            total_dist = pred_dist * skew_beta  + target_dist * (1 - skew_beta)
+            kl_q = target_dist * torch.log((target_dist + 1e-6) / (total_dist + 1e-6))
+            loss = (kl_p + kl_q) / 2
+        eps = torch.finfo(torch.float32).eps
+        return loss.sum() / (avg_factor + eps) * scale_alpha
+    
     def loss_by_feat(
             self,
             cls_scores: List[Tensor],

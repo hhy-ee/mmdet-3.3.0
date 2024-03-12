@@ -61,7 +61,6 @@ model = dict(
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
             type='MultiInstanceBBoxHead',
-            with_vpd=True,
             with_refine=False,
             num_shared_fcs=2,
             in_channels=256,
@@ -79,10 +78,7 @@ model = dict(
                 use_sigmoid=False,
                 reduction='none'),
             loss_bbox=dict(
-                type='SmoothL1Loss', loss_weight=1.0, reduction='none'),
-            loss_dist=dict(
-                type='JD', project=(-1, 1, 21), 
-                scale_alpha=1.5, skew_beta=0.2, reduction='none'))),
+                type='SmoothL1Loss', loss_weight=1.0, reduction='none'))),
     # model training and testing settings
     train_cfg=dict(
         rpn=dict(

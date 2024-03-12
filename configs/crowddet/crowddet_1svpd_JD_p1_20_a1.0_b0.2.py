@@ -34,6 +34,7 @@ model = dict(
         type='RPNHead',
         in_channels=256,
         feat_channels=256,
+        with_1s_vpd=True,
         anchor_generator=dict(
             type='AnchorGenerator',
             scales=[8],
@@ -46,7 +47,8 @@ model = dict(
             target_stds=[1.0, 1.0, 1.0, 1.0],
             clip_border=False),
         loss_cls=dict(type='CrossEntropyLoss', loss_weight=1.0),
-        loss_bbox=dict(type='L1Loss', loss_weight=1.0)),
+        loss_bbox=dict(type='L1Loss', loss_weight=1.0),
+        loss_dist=dict(type='JD', project=(-1, 1, 21), scale_alpha=1.0, skew_beta=0.2, reduction='none')),
     roi_head=dict(
         type='MultiInstanceRoIHead',
         bbox_roi_extractor=dict(
@@ -61,7 +63,6 @@ model = dict(
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=dict(
             type='MultiInstanceBBoxHead',
-            with_vpd=True,
             with_refine=False,
             num_shared_fcs=2,
             in_channels=256,
@@ -79,10 +80,7 @@ model = dict(
                 use_sigmoid=False,
                 reduction='none'),
             loss_bbox=dict(
-                type='SmoothL1Loss', loss_weight=1.0, reduction='none'),
-            loss_dist=dict(
-                type='JD', project=(-2, 2, 41), 
-                scale_alpha=0.5, skew_beta=0.2, reduction='none'))),
+                type='SmoothL1Loss', loss_weight=1.0, reduction='none'))),
     # model training and testing settings
     train_cfg=dict(
         rpn=dict(
