@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import os.path as osp
 import warnings
 from copy import deepcopy
@@ -59,8 +59,8 @@ def parse_args():
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     # args = parser.parse_args()
-    args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_30e_crowdhuman.py',
-                              './exp/ddq/ddq_fcn_r50_30e_crowdhuman/epoch_1.pth'])
+    args = parser.parse_args(['./configs/ddq/ddq-fcn-3x_crowdhuman_lr1e-4.py',
+                              './exp/ddq/ddq-fcn-3x_crowdhuman_lr1e-4/epoch_27.pth'])
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
     return args

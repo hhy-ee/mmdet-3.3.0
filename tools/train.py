@@ -52,10 +52,11 @@ def parse_args():
     # of `--local_rank`.
     parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     # args = parser.parse_args()
-    args = parser.parse_args(['./configs/crowddet/crowddet_base.py',
-                              '--work-dir', './exp/crowddet/crowddet_base'])
-    # args = parser.parse_args(['./configs/ddq/ddq_fcn_r50_12e_coco.py',
-    #                           '--work-dir', './exp/ddq/ddq_fcn_r50_12e_coco_lr5e-5'])
+    # args = parser.parse_args(['./configs/crowddet/crowddet_base.py',
+    #                           '--work-dir', './exp/crowddet/crowddet_base'])
+    args = parser.parse_args(['./configs/ddq/ddq_fcn_JD_p10_20_a1.0_b0.2.py',
+                              '--work-dir', './exp/ddq/ddq_fcn_JD_p10_20_a1.0_b0.2'])
+    # args.resume = './exp/ddq/ddq-fcn-3x_crowdhuman_lr1e-4/epoch_22.pth'
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
