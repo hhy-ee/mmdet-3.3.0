@@ -15,6 +15,7 @@ from .corner_head import CornerHead
 from .dab_detr_head import DABDETRHead
 from .ddod_head import DDODHead
 from .ddq_fcn_head import DDQFCNHead
+from .ddq_fcn_vpd_head import DDQFCNVPDHead
 from .ddq_detr_head import DDQDETRHead
 from .deformable_detr_head import DeformableDETRHead
 from .detr_head import DETRHead
@@ -70,5 +71,5 @@ __all__ = [
     'CondInstMaskHead', 'RTMDetInsHead', 'RTMDetInsSepBNHead',
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
-    'DDQFCNHead'
+    'DDQFCNHead', 'DDQFCNVPDHead'
 ]
