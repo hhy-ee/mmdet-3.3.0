@@ -110,7 +110,7 @@ class MultiInstanceRoIHead(StandardRoIHead):
             if self.bbox_head.with_2s_vpd:
                 bbox_pred = (bbox_results['bbox_pred'], bbox_results['bbox_lstd'])
             else:
-                bbox_pred = bbox_results['bbox_pred']
+                bbox_pred = (bbox_results['bbox_pred'],)
             bbox_loss_and_target = self.bbox_head.loss_and_target(
                 cls_score=bbox_results['cls_score'],
                 bbox_pred=bbox_pred,
@@ -118,9 +118,11 @@ class MultiInstanceRoIHead(StandardRoIHead):
                 sampling_results=sampling_results,
                 rcnn_train_cfg=self.train_cfg)
             bbox_results.update(loss_bbox=bbox_loss_and_target['loss_bbox'])
+            
+            bbox_pred = (bbox_results['bbox_pred_ref'],)
             bbox_loss_and_target_ref = self.bbox_head.loss_and_target(
                 cls_score=bbox_results['cls_score_ref'],
-                bbox_pred=bbox_results['bbox_pred_ref'],
+                bbox_pred=bbox_pred,
                 rois=rois,
                 sampling_results=sampling_results,
                 rcnn_train_cfg=self.train_cfg)
@@ -130,7 +132,7 @@ class MultiInstanceRoIHead(StandardRoIHead):
             if self.bbox_head.with_2s_vpd:
                 bbox_pred = (bbox_results['bbox_pred'], bbox_results['bbox_lstd'])
             else:
-                bbox_pred = bbox_results['bbox_pred']
+                bbox_pred = (bbox_results['bbox_pred'],)
             bbox_loss_and_target = self.bbox_head.loss_and_target(
                 cls_score=bbox_results['cls_score'],
                 bbox_pred=bbox_pred,

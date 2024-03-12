@@ -445,11 +445,16 @@ class MultiInstanceBBoxHead(BBoxHead):
             dict: A dictionary of loss.
         """
         losses = dict()
-        if self.with_2s_vpd:
+        if len(bbox_pred) == 1:
+            bbox_pred = bbox_pred[0]
+            use_vpd_loss = False
+        elif len(bbox_pred) == 2:
             bbox_lstd = bbox_pred[1]
             bbox_pred = bbox_pred[0]
+            use_vpd_loss = True
+            
         if bbox_pred.numel():
-            if self.with_2s_vpd:
+            if use_vpd_loss:
                 loss_0 = self.emd_vpd_loss(
                     bbox_pred[:, 0:4], cls_score[:, 0:2], bbox_lstd[:, 0:4],
                     bbox_pred[:, 4:8], cls_score[:, 2:4], bbox_lstd[:, 4:8],
