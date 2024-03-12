@@ -48,7 +48,7 @@ model = dict(
             clip_border=False),
         loss_cls=dict(type='CrossEntropyLoss', loss_weight=1.0),
         loss_bbox=dict(type='L1Loss', loss_weight=1.0),
-        loss_dist=dict(type='JD', project=(-1, 1, 21), scale_alpha=1.0, skew_beta=0.2, reduction='none')),
+        loss_dist=dict(type='JD', project=(-2, 2, 41), scale_alpha=1.0, skew_beta=0.2, reduction='none')),
     roi_head=dict(
         type='MultiInstanceRoIHead',
         bbox_roi_extractor=dict(
