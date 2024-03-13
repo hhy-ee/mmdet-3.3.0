@@ -380,7 +380,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
             **main_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
         # test stage
         if aux_results is None:
-            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists) = (None, None)
+            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists) = (None, None, None)
         else:
             aux_cls_scores, aux_bbox_preds, aux_bbox_dists, all_query_ids = self.pre_dqs(
                 **aux_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
