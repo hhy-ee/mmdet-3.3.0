@@ -34,6 +34,7 @@ model = dict(
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
         type='DDQFCNVPDHead',
+        with_vpd='aux',
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,

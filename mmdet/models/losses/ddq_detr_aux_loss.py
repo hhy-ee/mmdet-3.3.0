@@ -344,7 +344,7 @@ class DDQAuxVPDLoss(nn.Module):
         self.sampler = TASK_UTILS.build(sampler_cfg)
 
     def loss_single(self, cls_score, bbox_pred, bbox_dist, labels, label_weights,
-                    bbox_targets, alignment_metrics):
+                    bbox_targets, alignment_metrics, vpd_cfg):
         """Calculate auxiliary branches loss for dense queries for one image.
 
         Args:
@@ -381,17 +381,12 @@ class DDQAuxVPDLoss(nn.Module):
         if len(pos_inds) > 0:
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_bbox_pred = bbox_pred[pos_inds]
-            pos_bbox_dist = bbox_dist[pos_inds]
 
             pos_decode_bbox_pred = pos_bbox_pred
-            pos_decode_bbox_dist = pos_bbox_dist
             pos_decode_bbox_targets = pos_bbox_targets
 
             # regression loss
             pos_bbox_weight = alignment_metrics[pos_inds]
-
-            pos_decode_bbox_pred = self._get_pred_boxes(
-                                    pos_decode_bbox_dist)
 
             loss_bbox = self.loss_bbox(
                 pos_decode_bbox_pred,
@@ -400,13 +395,15 @@ class DDQAuxVPDLoss(nn.Module):
                 avg_factor=1.0)
             
             # regularization loss
-            loss_dist = self.loss_dist(
-                pos_decode_bbox_dist,
-                pos_decode_bbox_targets,
-                weight=pos_bbox_weight,
-                avg_factor=1.0)
-            
-            loss_bbox = loss_bbox + loss_dist
+            if vpd_cfg:
+                pos_bbox_dist = bbox_dist[pos_inds]
+                pos_decode_bbox_dist = pos_bbox_dist
+                loss_dist = self.loss_dist(
+                    pos_decode_bbox_dist,
+                    pos_decode_bbox_targets,
+                    weight=pos_bbox_weight,
+                    avg_factor=1.0)
+                loss_bbox = loss_bbox + loss_dist
         else:
             loss_bbox = bbox_pred.sum() * 0
             pos_bbox_weight = bbox_targets.new_tensor(0.)
@@ -508,6 +505,8 @@ class DDQAuxVPDLoss(nn.Module):
         Returns:
             dict: A dictionary of loss components.
         """
+        vpd_cfg = kwargs.pop('with_vpd')
+
         flatten_cls_scores = cls_scores
         flatten_bbox_preds = bbox_preds
         flatten_bbox_dists = bbox_dists
@@ -532,6 +531,7 @@ class DDQAuxVPDLoss(nn.Module):
                 label_weights_list,
                 bbox_targets_list,
                 alignment_metrics_list,
+                vpd_cfg,
                 )
 
         cls_avg_factor = reduce_mean(sum(cls_avg_factors)).clamp_(min=1).item()

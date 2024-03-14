@@ -54,11 +54,13 @@ class DDQFCNVPDHead(AnchorFreeHead):
             ),
             shuffle_channles=64,
             dqs_cfg=dict(type='nms', iou_threshold=0.7, nms_pre=1000),
+            with_vpd='main',
             offset=0.5,
             num_distinct_queries=300,
             **kwargs):
         self.num_distinct_queries = num_distinct_queries
         self.dqs_cfg = dqs_cfg
+        self.with_vpd = with_vpd
         super(DDQFCNVPDHead, self).__init__(*args, strides=strides, **kwargs)
         self.aux_loss = DDQAuxVPDLoss(**aux_loss)
         self.main_loss = DDQAuxVPDLoss(**main_loss)
@@ -125,19 +127,28 @@ class DDQFCNVPDHead(AnchorFreeHead):
         main_loss_inputs, aux_loss_inputs = self.get_inputs(
             main_results, aux_results, img_metas=batch_img_metas)
         
-        aux_loss = self.aux_loss.loss(*aux_loss_inputs,
-            gt_bboxes=[item.bboxes for item in batch_gt_instances],
-            gt_labels=[item.labels for item in batch_gt_instances],
-            img_metas=batch_img_metas)
-        
-        for k, v in aux_loss.items():
-            loss[f'aux_{k}'] = v
+        if self.with_vpd == 'main':
+            aux_loss = self.aux_loss.loss(*aux_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[False for i in batch_gt_instances])
+            main_loss = self.main_loss.loss(*main_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+        elif self.with_vpd == 'aux':
+            aux_loss = self.aux_loss.loss(*aux_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+            main_loss = self.main_loss.loss(*main_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[False for i in batch_gt_instances])
             
-        main_loss = self.main_loss.loss(*main_loss_inputs,
-            gt_bboxes=[item.bboxes for item in batch_gt_instances],
-            gt_labels=[item.labels for item in batch_gt_instances],
-            img_metas=batch_img_metas)
-        
+        for k, v in aux_loss.items():
+                loss[f'aux_{k}'] = v
+
         loss.update(main_loss)
         
         loss['num_proposal'] = torch.as_tensor(

@@ -34,6 +34,7 @@ model = dict(
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
         type='DDQFCNVPDHead',
+        with_vpd='main',
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
@@ -41,7 +42,7 @@ model = dict(
         main_loss=dict(
             loss_dist=dict(
                 type='JD', 
-                project=(-10, 10, 21), 
+                project=(-5, 5, 21), 
                 scale_alpha=1.0, 
                 skew_beta=0.2)),
         strides=(8, 16, 32, 64, 128),
