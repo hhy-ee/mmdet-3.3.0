@@ -37,8 +37,7 @@ model = dict(
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
-            nms_pre=1000,
-        ),
+            nms_pre=1000,),
         strides=(8, 16, 32, 64, 128),
         num_classes=1,
         in_channels=256,

@@ -32,8 +32,7 @@ model = dict(
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
-            nms_pre=1000,
-        ),
+            nms_pre=1000,),
         strides=(8, 16, 32, 64, 128),
         num_classes=80,
         in_channels=256,
@@ -89,7 +88,7 @@ train_dataloader = dict(
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=2e-4 * 0.5, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=4e-4 * 0.5, weight_decay=0.05),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1)}))
 
