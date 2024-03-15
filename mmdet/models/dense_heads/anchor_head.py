@@ -460,25 +460,25 @@ class AnchorHead(BaseDenseHead):
         bbox_pred = bbox_pred.permute(0, 2, 3,
                                       1).reshape(-1,
                                                  self.bbox_coder.encode_size)
+                                      
+        if self.reg_decoded_bbox:
+            # When the regression loss (e.g. `IouLoss`, `GIouLoss`)
+            # is applied directly on the decoded bounding boxes, it
+            # decodes the already encoded coordinates to absolute format.
+            anchors = anchors.reshape(-1, anchors.size(-1))
+            bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
+            bbox_pred = get_box_tensor(bbox_pred)
+        loss_bbox = self.loss_bbox(
+            bbox_pred, bbox_targets, bbox_weights, avg_factor=avg_factor)
+        
         if self.with_1s_vpd:
             fg_masks = bbox_weights > 0
-            loss_bbox = self.loss_bbox(
-                bbox_pred[fg_masks], bbox_targets[fg_masks], avg_factor=avg_factor)
             loss_dist = self.regularization_loss(
                 bbox_pred[fg_masks], bbox_lstd[fg_masks], bbox_targets[fg_masks],
                 self.loss_dist_cfg['type'], self.loss_dist_cfg['project'],
                 self.loss_dist_cfg['scale_alpha'], self.loss_dist_cfg['skew_beta'], avg_factor)
             loss_bbox = loss_bbox + loss_dist
-        else:
-            if self.reg_decoded_bbox:
-                # When the regression loss (e.g. `IouLoss`, `GIouLoss`)
-                # is applied directly on the decoded bounding boxes, it
-                # decodes the already encoded coordinates to absolute format.
-                anchors = anchors.reshape(-1, anchors.size(-1))
-                bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
-                bbox_pred = get_box_tensor(bbox_pred)
-            loss_bbox = self.loss_bbox(
-                bbox_pred, bbox_targets, bbox_weights, avg_factor=avg_factor)
+            
         return loss_cls, loss_bbox
 
     def regularization_loss(self, mean, lstd, target, metric, project, scale_alpha, skew_beta, avg_factor):
