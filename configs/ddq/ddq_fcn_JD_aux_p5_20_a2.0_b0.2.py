@@ -33,11 +33,18 @@ model = dict(
         num_outs=5,
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
-        type='DDQFCNHead',
+        type='DDQFCNVPDHead',
+        with_vpd='aux',
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
             nms_pre=1000,),
+        main_loss=dict(
+            loss_dist=dict(
+                type='JD', 
+                project=(-5, 5, 21), 
+                scale_alpha=2.0, 
+                skew_beta=0.2)),
         strides=(8, 16, 32, 64, 128),
         num_classes=1,
         in_channels=256,
@@ -103,8 +110,8 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=2,
-    num_workers=4,
+    batch_size=8,
+    num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=None,  # The 'batch_sampler' may decrease the precision
@@ -140,7 +147,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # training schedule for 2x
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=30, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -155,20 +162,20 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=30,
+        end=36,
         by_epoch=True,
-        milestones=[24, 27],
+        milestones=[24, 33],
         gamma=0.1)
 ]
 
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=1e-4 * 0.5, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=8e-4 * 0.5, weight_decay=0.05),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1)}))
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # USER SHOULD NOT CHANGE ITS VALUES.
 # base_batch_size = (8 GPUs) x (2 samples per GPU)
-auto_scale_lr = dict(base_batch_size=2)
+auto_scale_lr = dict(base_batch_size=8)
