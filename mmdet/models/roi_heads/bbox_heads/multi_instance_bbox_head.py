@@ -101,28 +101,22 @@ class MultiInstanceBBoxHead(BBoxHead):
                 True)
         self.shared_out_channels = last_layer_dim
         self.relu = nn.ReLU(inplace=True)
-
-        if self.with_2s_vpd:
-            self.fc_std = nn.ModuleList()
             
         if self.with_refine:
-            if self.with_2s_vpd:
-                refine_model_cfg = {
-                    'type': 'Linear',
-                    'in_features': self.shared_out_channels + 36,
-                    'out_features': self.shared_out_channels
-                }
-                self.shared_fcs_ref = MODELS.build(refine_model_cfg)
-            else:
-                refine_model_cfg = {
-                    'type': 'Linear',
-                    'in_features': self.shared_out_channels + 20,
-                    'out_features': self.shared_out_channels
-                }
-                self.shared_fcs_ref = MODELS.build(refine_model_cfg)
+            refine_model_cfg = {
+                'type': 'Linear',
+                'in_features': self.shared_out_channels + 20,
+                'out_features': self.shared_out_channels
+            }
+            self.shared_fcs_ref = MODELS.build(refine_model_cfg)
             self.fc_cls_ref = nn.ModuleList()
             self.fc_reg_ref = nn.ModuleList()
-
+            if self.with_2s_vpd:
+                self.fc_std_ref = nn.ModuleList()
+        else:
+            if self.with_2s_vpd: 
+                self.fc_std = nn.ModuleList()
+        
         self.cls_convs = nn.ModuleList()
         self.cls_fcs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
@@ -173,10 +167,14 @@ class MultiInstanceBBoxHead(BBoxHead):
                 reg_predictor_cfg_.update(
                     in_features=self.reg_last_dim[k], out_features=out_dim_reg)
                 self.fc_reg.append(MODELS.build(reg_predictor_cfg_))
-                if self.with_2s_vpd:
-                    self.fc_std.append(MODELS.build(reg_predictor_cfg_))
                 if self.with_refine:
                     self.fc_reg_ref.append(MODELS.build(reg_predictor_cfg_))
+                    if self.with_2s_vpd:
+                        self.fc_std_ref.append(MODELS.build(reg_predictor_cfg_))
+                else:
+                    if self.with_2s_vpd:
+                        self.fc_std.append(MODELS.build(reg_predictor_cfg_))
+                    
 
         if init_cfg is None:
             # when init_cfg is None,
@@ -271,7 +269,7 @@ class MultiInstanceBBoxHead(BBoxHead):
         # separate branches
         cls_score = list()
         bbox_pred = list()
-        if self.with_2s_vpd:
+        if  self.with_2s_vpd and not self.with_refine:
             bbox_lstd = list()
         for k in range(self.num_instance):
             for conv in self.cls_convs[k]:
@@ -294,26 +292,26 @@ class MultiInstanceBBoxHead(BBoxHead):
 
             cls_score.append(self.fc_cls[k](x_cls) if self.with_cls else None)
             bbox_pred.append(self.fc_reg[k](x_reg) if self.with_reg else None)
-            if self.with_2s_vpd:
+            if self.with_2s_vpd and not self.with_refine:
                 bbox_lstd.append(self.fc_std[k](x_reg) if self.with_reg else None)
 
         if self.with_refine:
             x_ref = x
             cls_score_ref = list()
             bbox_pred_ref = list()
+            if self.with_2s_vpd:
+                bbox_lstd_ref = list()
             for k in range(self.num_instance):
                 feat_ref = cls_score[k].softmax(dim=-1)
-                if self.with_2s_vpd:
-                    feat_ref = torch.cat((bbox_pred[k], bbox_lstd[k], 
-                                feat_ref[:, 1][:, None]), dim=1).repeat(1, 4)
-                else:
-                    feat_ref = torch.cat((bbox_pred[k], feat_ref[:, 1][:, None]),
-                                        dim=1).repeat(1, 4)
+                feat_ref = torch.cat((bbox_pred[k], feat_ref[:, 1][:, None]),
+                                    dim=1).repeat(1, 4)
                 feat_ref = torch.cat((x_ref, feat_ref), dim=1)
                 feat_ref = F.relu_(self.shared_fcs_ref(feat_ref))
 
                 cls_score_ref.append(self.fc_cls_ref[k](feat_ref))
                 bbox_pred_ref.append(self.fc_reg_ref[k](feat_ref))
+                if self.with_2s_vpd:
+                    bbox_lstd_ref.append(self.fc_std_ref[k](feat_ref))
 
             cls_score = torch.cat(cls_score, dim=1)
             bbox_pred = torch.cat(bbox_pred, dim=1)
@@ -321,8 +319,8 @@ class MultiInstanceBBoxHead(BBoxHead):
             bbox_pred_ref = torch.cat(bbox_pred_ref, dim=1)
 
             if self.with_2s_vpd:
-                bbox_lstd = torch.cat(bbox_lstd, dim=1)
-                return cls_score, bbox_pred, bbox_lstd, cls_score_ref, bbox_pred_ref
+                bbox_lstd_ref = torch.cat(bbox_lstd_ref, dim=1)
+                return cls_score, bbox_pred, cls_score_ref, bbox_pred_ref, bbox_lstd_ref
             
             return cls_score, bbox_pred, cls_score_ref, bbox_pred_ref
 
