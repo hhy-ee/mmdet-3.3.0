@@ -379,31 +379,32 @@ class DDQAuxVPDLoss(nn.Module):
                     & (labels < bg_class_ind)).nonzero().squeeze(1)
 
         if len(pos_inds) > 0:
-            pos_bbox_targets = bbox_targets[pos_inds]
-            pos_bbox_pred = bbox_pred[pos_inds]
+            pos_decode_bbox_targets = bbox_targets[pos_inds]
 
-            pos_decode_bbox_pred = pos_bbox_pred
-            pos_decode_bbox_targets = pos_bbox_targets
-
-            # regression loss
             pos_bbox_weight = alignment_metrics[pos_inds]
 
-            loss_bbox = self.loss_bbox(
-                pos_decode_bbox_pred,
-                pos_decode_bbox_targets,
-                weight=pos_bbox_weight,
-                avg_factor=1.0)
-            
-            # regularization loss
             if vpd_cfg:
-                pos_bbox_dist = bbox_dist[pos_inds]
-                pos_decode_bbox_dist = pos_bbox_dist
+                pos_decode_bbox_dist = bbox_dist[pos_inds]
+                pos_decode_bbox_pred = self._get_pred_boxes(pos_decode_bbox_dist)
+                loss_bbox = self.loss_bbox(
+                    pos_decode_bbox_pred,
+                    pos_decode_bbox_targets,
+                    weight=pos_bbox_weight,
+                    avg_factor=1.0)
+                # regularization loss
                 loss_dist = self.loss_dist(
                     pos_decode_bbox_dist,
                     pos_decode_bbox_targets,
                     weight=pos_bbox_weight,
                     avg_factor=1.0)
                 loss_bbox = loss_bbox + loss_dist
+            else:
+                pos_decode_bbox_pred = bbox_pred[pos_inds]
+                loss_bbox = self.loss_bbox(
+                    pos_decode_bbox_pred,
+                    pos_decode_bbox_targets,
+                    weight=pos_bbox_weight,
+                    avg_factor=1.0)
         else:
             loss_bbox = bbox_pred.sum() * 0
             pos_bbox_weight = bbox_targets.new_tensor(0.)

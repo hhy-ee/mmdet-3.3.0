@@ -34,7 +34,7 @@ model = dict(
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
         type='DDQFCNVPDHead',
-        with_vpd='aux',
+        with_vpd='all',
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
@@ -44,7 +44,7 @@ model = dict(
                 type='JD', 
                 project=(-5, 5, 21), 
                 scale_alpha=1.0, 
-                skew_beta=0.1)),
+                skew_beta=0.2)),
         strides=(8, 16, 32, 64, 128),
         num_classes=1,
         in_channels=256,

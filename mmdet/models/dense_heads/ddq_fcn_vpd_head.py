@@ -145,6 +145,16 @@ class DDQFCNVPDHead(AnchorFreeHead):
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
                 img_metas=batch_img_metas, with_vpd=[False for i in batch_gt_instances])
+        elif self.with_vpd == 'all':
+            aux_loss = self.aux_loss.loss(*aux_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+            main_loss = self.main_loss.loss(*main_loss_inputs,
+                gt_bboxes=[item.bboxes for item in batch_gt_instances],
+                gt_labels=[item.labels for item in batch_gt_instances],
+                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+        # elif self.with_vpd == 'all':
             
         for k, v in aux_loss.items():
                 loss[f'aux_{k}'] = v
@@ -292,6 +302,8 @@ class DDQFCNVPDHead(AnchorFreeHead):
             object_nesss = conv_objectness(reg_feat)
             cls_score = sigmoid_geometric_mean(cls_logits, object_nesss)
             reg_dist = scale(conv_reg(reg_feat)).float()
+            if torch.isnan(reg_dist.sum()):
+                a = 1
             std_dist = scale(conv_std(reg_feat)).float()
             bbox_lstds_list.append(std_dist)
             cls_scores_list.append(cls_score)
