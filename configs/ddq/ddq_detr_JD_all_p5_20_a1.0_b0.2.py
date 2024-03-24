@@ -1,16 +1,18 @@
 _base_ = ['../_base_/default_runtime.py']
 
 model = dict(
-    type='SingleStageDetector',
+    type='DDQDETR',
+    num_queries=900,  # num_matching_queries
+    # ratio of num_dense queries to num_queries
+    dense_topk_ratio=1.5,
+    with_box_refine=True,
+    as_two_stage=True,
     data_preprocessor=dict(
         type='DetDataPreprocessor',
         mean=[103.53, 116.28, 123.675],
         std=[57.375, 57.12, 58.395],
         bgr_to_rgb=False,
         pad_size_divisor=64,
-        # This option is set according to https://github.com/Purkialo/CrowdDet/
-        # blob/master/lib/data/CrowdHuman.py The images in the entire batch are
-        # resize together.
         batch_augments=[
             dict(type='BatchResize', scale=(1400, 800), pad_size_divisor=64)
         ]),
@@ -18,39 +20,82 @@ model = dict(
         type='ResNet',
         depth=50,
         num_stages=4,
-        out_indices=(0, 1, 2, 3),
+        out_indices=(1, 2, 3),
         frozen_stages=1,
-        norm_cfg=dict(type='BN', requires_grad=True),
+        norm_cfg=dict(type='BN', requires_grad=False),
         norm_eval=True,
         style='pytorch',
         init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
     neck=dict(
-        type='FPN',
-        in_channels=[256, 512, 1024, 2048],
+        type='ChannelMapper',
+        in_channels=[512, 1024, 2048],
+        kernel_size=1,
         out_channels=256,
-        start_level=1,
-        add_extra_convs='on_input',
-        num_outs=5,
-        upsample_cfg=dict(mode='bilinear', align_corners=False)),
+        act_cfg=None,
+        norm_cfg=dict(type='GN', num_groups=32),
+        num_outs=4),
+    # encoder class name: DeformableDetrTransformerEncoder
+    encoder=dict(
+        num_layers=6,
+        layer_cfg=dict(
+            self_attn_cfg=dict(embed_dims=256, num_levels=4,
+                               dropout=0.0),  # 0.1 for DeformDETR
+            ffn_cfg=dict(
+                embed_dims=256,
+                feedforward_channels=2048,  # 1024 for DeformDETR
+                ffn_drop=0.0))),  # 0.1 for DeformDETR
+    # decoder class name: DDQTransformerDecoder
+    decoder=dict(
+        # `num_layers` >= 2, because attention masks of the last
+        #   `num_layers` - 1 layers are used for distinct query selection
+        num_layers=6,
+        return_intermediate=True,
+        layer_cfg=dict(
+            self_attn_cfg=dict(embed_dims=256, num_heads=8,
+                               dropout=0.0),  # 0.1 for DeformDETR
+            cross_attn_cfg=dict(embed_dims=256, num_levels=4,
+                                dropout=0.0),  # 0.1 for DeformDETR
+            ffn_cfg=dict(
+                embed_dims=256,
+                feedforward_channels=2048,  # 1024 for DeformDETR
+                ffn_drop=0.0)),  # 0.1 for DeformDETR
+        post_norm_cfg=None),
+    positional_encoding=dict(
+        num_feats=128,
+        normalize=True,
+        offset=0.0,  # -0.5 for DeformDETR
+        temperature=20),  # 10000 for DeformDETR
     bbox_head=dict(
-        type='DDQFCNVPDHead',
-        with_vpd='all',
-        dqs_cfg=dict(
-            type='nms',
-            iou_threshold=0.7,
-            nms_pre=1000,),
-        main_loss=dict(
-            loss_dist=dict(
-                type='JD', 
-                project=(-5, 5, 21), 
-                scale_alpha=1.0, 
-                skew_beta=0.4)),
-        strides=(8, 16, 32, 64, 128),
+        type='DDQDETRHead',
         num_classes=1,
-        in_channels=256,
-        norm_cfg=dict(type='GN',
-                        num_groups=32,
-                        requires_grad=True)))
+        with_vpd=True,
+        vi_mode='all',
+        sync_cls_avg_factor=True,
+        loss_cls=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=1.0),
+        loss_bbox=dict(type='L1Loss', loss_weight=5.0),
+        loss_dist=dict(type='JD', project=(-10, 10, 21), scale_alpha=5.0, skew_beta=0.2),
+        loss_iou=dict(type='GIoULoss', loss_weight=2.0)),
+    dn_cfg=dict(
+        label_noise_scale=0.5,
+        box_noise_scale=1.0,
+        group_cfg=dict(dynamic=True, num_groups=None, num_dn_queries=100)),
+    dqs_cfg=dict(type='nms', iou_threshold=0.8),
+    # training and testing settings
+    train_cfg=dict(
+        assigner=dict(
+            type='HungarianAssigner',
+            match_costs=[
+                dict(type='FocalLossCost', weight=2.0),
+                dict(type='BBoxL1Cost', weight=5.0, box_format='xywh'),
+                dict(type='IoUCost', iou_mode='giou', weight=2.0)
+            ])),
+    test_cfg=dict(max_per_img=300))
+
 
 dataset_type = 'CrowdHumanDataset'
 data_root = 'data/CrowdHuman/'
@@ -110,8 +155,8 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=8,
-    num_workers=8,
+    batch_size=2,
+    num_workers=4,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=None,  # The 'batch_sampler' may decrease the precision
@@ -171,11 +216,11 @@ param_scheduler = [
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=8e-4 * 0.5, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=0.0002, weight_decay=0.05),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1)}))
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # USER SHOULD NOT CHANGE ITS VALUES.
 # base_batch_size = (8 GPUs) x (2 samples per GPU)
-auto_scale_lr = dict(base_batch_size=8)
+auto_scale_lr = dict(base_batch_size=2)

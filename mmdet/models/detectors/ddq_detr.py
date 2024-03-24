@@ -259,11 +259,20 @@ class DDQDETR(DINO):
 
         reference_points = reference_points.sigmoid()
 
-        decoder_inputs_dict = dict(
-            query=query,
-            memory=memory,
-            reference_points=reference_points,
-            dn_mask=dn_mask)
+        if self.bbox_head.with_vpd:
+            decoder_inputs_dict = dict(
+                query=query,
+                memory=memory,
+                reference_points=reference_points,
+                dn_mask=dn_mask,
+                extra_branches=self.bbox_head.std_branches)
+        else:
+            decoder_inputs_dict = dict(
+                query=query,
+                memory=memory,
+                reference_points=reference_points,
+                dn_mask=dn_mask)
+        
         head_inputs_dict = dict(
             enc_outputs_class=topk_score,
             enc_outputs_coord=topk_coords,
