@@ -345,7 +345,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
                 bbox_preds_list.append(reg_dist)
                 bbox_lstds_list.append(std_dist)
                 bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
-                
+
                 aux_results = dict(cls_scores_list=cls_scores_list,
                                     bbox_preds_list=bbox_preds_list,
                                     bbox_lstds_list=bbox_lstds_list,
@@ -421,7 +421,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
             **main_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
         # test stage
         if aux_results is None:
-            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists, all_bbox_samps) = (None, None, None, None)
+            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists, aux_bbox_samps) = (None, None, None, None)
         else:
             aux_cls_scores, aux_bbox_preds, aux_bbox_dists, aux_bbox_samps, all_query_ids = self.pre_dqs(
                 **aux_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
@@ -545,7 +545,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
         return torch.cat(mlvl_scores), torch.cat(mlvl_bboxes), torch.cat(mlvl_dists), torch.cat(mvlv_samps), torch.cat(
             mlvl_query_inds)
 
-    def get_bboxes(self, cls_scores, bbox_preds, bbox_dists, img_metas=None, **kwargs):
+    def get_bboxes(self, cls_scores, bbox_preds, bbox_dists, bbox_samp, img_metas=None, **kwargs):
 
         result_list = []
         for sinlge_score, single_bbox_pred, img_meta in zip(
