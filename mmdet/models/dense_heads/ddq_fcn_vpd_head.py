@@ -322,7 +322,6 @@ class DDQFCNVPDHead(AnchorFreeHead):
             bbox_lstds_list.append(std_dist)
             bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
 
-        if self.train_with_vpd == 'main' or self.train_with_vpd == 'all':
             main_results = dict(cls_scores_list=cls_scores_list,
                                 bbox_preds_list=bbox_preds_list,
                                 bbox_lstds_list=bbox_lstds_list,
@@ -346,7 +345,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
                 bbox_preds_list.append(reg_dist)
                 bbox_lstds_list.append(std_dist)
                 bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
-            if self.train_with_vpd == 'aux' or self.train_with_vpd == 'all':
+                
                 aux_results = dict(cls_scores_list=cls_scores_list,
                                     bbox_preds_list=bbox_preds_list,
                                     bbox_lstds_list=bbox_lstds_list,
