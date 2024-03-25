@@ -343,8 +343,8 @@ class DDQAuxVPDLoss(nn.Module):
         sampler_cfg = dict(type='PseudoSampler')
         self.sampler = TASK_UTILS.build(sampler_cfg)
 
-    def loss_single(self, cls_score, bbox_pred, bbox_dist, labels, label_weights,
-                    bbox_targets, alignment_metrics, vpd_cfg):
+    def loss_single(self, cls_score, bbox_pred, bbox_dist, bbox_samp, labels, label_weights,
+                    bbox_targets, alignment_metrics, train_with_vpd):
         """Calculate auxiliary branches loss for dense queries for one image.
 
         Args:
@@ -380,12 +380,11 @@ class DDQAuxVPDLoss(nn.Module):
 
         if len(pos_inds) > 0:
             pos_decode_bbox_targets = bbox_targets[pos_inds]
-
             pos_bbox_weight = alignment_metrics[pos_inds]
 
-            if vpd_cfg:
+            if train_with_vpd:
                 pos_decode_bbox_dist = bbox_dist[pos_inds]
-                pos_decode_bbox_pred = self._get_pred_boxes(pos_decode_bbox_dist)
+                pos_decode_bbox_pred = bbox_samp[pos_inds]
                 loss_bbox = self.loss_bbox(
                     pos_decode_bbox_pred,
                     pos_decode_bbox_targets,
@@ -411,20 +410,6 @@ class DDQAuxVPDLoss(nn.Module):
 
         return loss_cls, loss_bbox, alignment_metrics.sum(
         ), pos_bbox_weight.sum()
-
-    def _get_pred_boxes(self, dist):
-
-        bbox_mean = dist[:, 0:4]
-        bbox_lstd = dist[:, 4:8]
-        bbox_prior = dist[:, 8:10]
-        bbox_stride = dist[:, 10:11]
-        
-        # variational inference
-        bbox_pred = bbox_mean + bbox_lstd.exp() * torch.randn_like(bbox_mean)
-        bbox_pred = bbox_pred.exp() * bbox_stride
-        bbox_pred = distance2bbox(bbox_prior, bbox_pred)
-
-        return bbox_pred
 
     def loss_dist(self, pred, target, weight, avg_factor):
 
@@ -482,7 +467,7 @@ class DDQAuxVPDLoss(nn.Module):
             loss = (kl_p + kl_q) / 2
         return loss.sum(1).reshape(-1, 4).sum(1) * scale_alpha
     
-    def loss(self, cls_scores, bbox_preds, bbox_dists, gt_bboxes, gt_labels, img_metas,
+    def loss(self, cls_scores, bbox_preds, bbox_dists, bbox_samps, gt_bboxes, gt_labels, img_metas,
              **kwargs):
         """Calculate auxiliary branches loss for dense queries.
 
@@ -506,19 +491,30 @@ class DDQAuxVPDLoss(nn.Module):
         Returns:
             dict: A dictionary of loss components.
         """
-        vpd_cfg = kwargs.pop('with_vpd')
+        train_with_vpd = kwargs.pop('train_with_vpd')
+        assign_with_vpd = kwargs.pop('assign_with_vpd')
 
         flatten_cls_scores = cls_scores
         flatten_bbox_preds = bbox_preds
         flatten_bbox_dists = bbox_dists
+        flatten_bbox_samps = bbox_samps
 
-        cls_reg_targets = self.get_targets(
-            flatten_cls_scores,
-            flatten_bbox_preds,
-            gt_bboxes,
-            img_metas,
-            gt_labels_list=gt_labels,
+        if assign_with_vpd:
+            cls_reg_targets = self.get_targets(
+                flatten_cls_scores,
+                flatten_bbox_samps,
+                gt_bboxes,
+                img_metas,
+                gt_labels_list=gt_labels,
         )
+        else:
+            cls_reg_targets = self.get_targets(
+                flatten_cls_scores,
+                flatten_bbox_preds,
+                gt_bboxes,
+                img_metas,
+                gt_labels_list=gt_labels,
+            )
         (labels_list, label_weights_list, bbox_targets_list,
          alignment_metrics_list) = cls_reg_targets
 
@@ -528,11 +524,12 @@ class DDQAuxVPDLoss(nn.Module):
                 flatten_cls_scores,
                 flatten_bbox_preds,
                 flatten_bbox_dists,
+                flatten_bbox_samps,
                 labels_list,
                 label_weights_list,
                 bbox_targets_list,
                 alignment_metrics_list,
-                vpd_cfg,
+                train_with_vpd,
                 )
 
         cls_avg_factor = reduce_mean(sum(cls_avg_factors)).clamp_(min=1).item()

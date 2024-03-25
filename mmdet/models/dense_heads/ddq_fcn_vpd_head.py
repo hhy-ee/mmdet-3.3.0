@@ -54,13 +54,15 @@ class DDQFCNVPDHead(AnchorFreeHead):
             ),
             shuffle_channles=64,
             dqs_cfg=dict(type='nms', iou_threshold=0.7, nms_pre=1000),
-            with_vpd='main',
+            train_with_vpd='all',
+            assign_with_vpd=False,
             offset=0.5,
             num_distinct_queries=300,
             **kwargs):
         self.num_distinct_queries = num_distinct_queries
         self.dqs_cfg = dqs_cfg
-        self.with_vpd = with_vpd
+        self.train_with_vpd = train_with_vpd
+        self.assign_with_vpd = assign_with_vpd
         super(DDQFCNVPDHead, self).__init__(*args, strides=strides, **kwargs)
         self.aux_loss = DDQAuxVPDLoss(**aux_loss)
         self.main_loss = DDQAuxVPDLoss(**main_loss)
@@ -127,34 +129,45 @@ class DDQFCNVPDHead(AnchorFreeHead):
         main_loss_inputs, aux_loss_inputs = self.get_inputs(
             main_results, aux_results, img_metas=batch_img_metas)
         
-        if self.with_vpd == 'main':
+        if self.train_with_vpd == 'main':
             aux_loss = self.aux_loss.loss(*aux_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[False for i in batch_gt_instances])
+                img_metas=batch_img_metas, 
+                train_with_vpd=[False for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
             main_loss = self.main_loss.loss(*main_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
-        elif self.with_vpd == 'aux':
+                img_metas=batch_img_metas, 
+                train_with_vpd=[True for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
+        elif self.train_with_vpd == 'aux':
             aux_loss = self.aux_loss.loss(*aux_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+                img_metas=batch_img_metas, 
+                train_with_vpd=[True for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
             main_loss = self.main_loss.loss(*main_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[False for i in batch_gt_instances])
-        elif self.with_vpd == 'all':
+                img_metas=batch_img_metas, 
+                train_with_vpd=[False for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
+        elif self.train_with_vpd == 'all':
             aux_loss = self.aux_loss.loss(*aux_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
+                img_metas=batch_img_metas, 
+                train_with_vpd=[True for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
             main_loss = self.main_loss.loss(*main_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
                 gt_labels=[item.labels for item in batch_gt_instances],
-                img_metas=batch_img_metas, with_vpd=[True for i in batch_gt_instances])
-        # elif self.with_vpd == 'all':
+                img_metas=batch_img_metas, 
+                train_with_vpd=[True for i in batch_gt_instances],
+                assign_with_vpd=[self.assign_with_vpd for i in batch_gt_instances])
             
         for k, v in aux_loss.items():
                 loss[f'aux_{k}'] = v
@@ -282,6 +295,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
         cls_scores_list = []
         bbox_preds_list = []
         bbox_lstds_list = []
+        bbox_samps_list = []
 
         for layer_index, conv_m in enumerate(cls_convs):
             # shuffle last 2 feature maps
@@ -302,22 +316,24 @@ class DDQFCNVPDHead(AnchorFreeHead):
             object_nesss = conv_objectness(reg_feat)
             cls_score = sigmoid_geometric_mean(cls_logits, object_nesss)
             reg_dist = scale(conv_reg(reg_feat)).float()
-            if torch.isnan(reg_dist.sum()):
-                a = 1
             std_dist = scale(conv_std(reg_feat)).float()
-            bbox_lstds_list.append(std_dist)
             cls_scores_list.append(cls_score)
             bbox_preds_list.append(reg_dist)
+            bbox_lstds_list.append(std_dist)
+            bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
 
-        main_results = dict(cls_scores_list=cls_scores_list,
-                            bbox_preds_list=bbox_preds_list,
-                            bbox_lstds_list=bbox_lstds_list,
-                            cls_feats=cls_feats,
-                            reg_feats=reg_feats)
+        if self.train_with_vpd == 'main' or self.train_with_vpd == 'all':
+            main_results = dict(cls_scores_list=cls_scores_list,
+                                bbox_preds_list=bbox_preds_list,
+                                bbox_lstds_list=bbox_lstds_list,
+                                bbox_samps_list=bbox_samps_list,
+                                cls_feats=cls_feats,
+                                reg_feats=reg_feats)
         if self.training:
             cls_scores_list = []
             bbox_preds_list = []
             bbox_lstds_list = []
+            bbox_samps_list = []
 
             for idx, (cls_feat, reg_feat, scale) in enumerate(
                     zip(cls_feats, reg_feats, self.aux_scales)):
@@ -326,14 +342,17 @@ class DDQFCNVPDHead(AnchorFreeHead):
                 cls_score = sigmoid_geometric_mean(cls_logits, object_nesss)
                 reg_dist = scale(self.aux_conv_reg(reg_feat)).float()
                 std_dist = scale(self.aux_conv_std(reg_feat)).float()
-                bbox_lstds_list.append(std_dist)
                 cls_scores_list.append(cls_score)
                 bbox_preds_list.append(reg_dist)
-            aux_results = dict(cls_scores_list=cls_scores_list,
-                               bbox_preds_list=bbox_preds_list,
-                               bbox_lstds_list=bbox_lstds_list,
-                               cls_feats=cls_feats,
-                               reg_feats=reg_feats)
+                bbox_lstds_list.append(std_dist)
+                bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
+            if self.train_with_vpd == 'aux' or self.train_with_vpd == 'all':
+                aux_results = dict(cls_scores_list=cls_scores_list,
+                                    bbox_preds_list=bbox_preds_list,
+                                    bbox_lstds_list=bbox_lstds_list,
+                                    bbox_samps_list=bbox_samps_list,
+                                    cls_feats=cls_feats,
+                                    reg_feats=reg_feats)
         else:
             aux_results = None
         return main_results, aux_results
@@ -399,26 +418,27 @@ class DDQFCNVPDHead(AnchorFreeHead):
             dtype=mlvl_score[0].dtype,
             device=mlvl_score[0].device)
 
-        all_cls_scores, all_bbox_preds, all_bbox_dists, all_query_ids = self.pre_dqs(
+        all_cls_scores, all_bbox_preds, all_bbox_dists, all_bbox_samps, all_query_ids = self.pre_dqs(
             **main_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
         # test stage
         if aux_results is None:
-            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists) = (None, None, None)
+            (aux_cls_scores, aux_bbox_preds, aux_bbox_dists, all_bbox_samps) = (None, None, None, None)
         else:
-            aux_cls_scores, aux_bbox_preds, aux_bbox_dists, all_query_ids = self.pre_dqs(
+            aux_cls_scores, aux_bbox_preds, aux_bbox_dists, aux_bbox_samps, all_query_ids = self.pre_dqs(
                 **aux_results, mlvl_priors=mlvl_priors, img_metas=img_metas)
 
-        nms_all_cls_scores, nms_all_bbox_preds, nms_all_bbox_dists = self.dqs(
-            all_cls_scores, all_bbox_preds, all_bbox_dists)
+        nms_all_cls_scores, nms_all_bbox_preds, nms_all_bbox_dists, nms_all_bbox_samps = self.dqs(
+            all_cls_scores, all_bbox_preds, all_bbox_dists, all_bbox_samps)
 
-        return (nms_all_cls_scores, nms_all_bbox_preds, nms_all_bbox_dists), (aux_cls_scores,
-                                                          aux_bbox_preds, aux_bbox_dists)
+        return (nms_all_cls_scores, nms_all_bbox_preds, nms_all_bbox_dists, nms_all_bbox_samps), (aux_cls_scores,
+                                                          aux_bbox_preds, aux_bbox_dists, aux_bbox_samps)
 
-    def dqs(self, all_mlvl_scores, all_mlvl_bboxes, all_mlvl_dists):
+    def dqs(self, all_mlvl_scores, all_mlvl_bboxes, all_mlvl_dists, all_mlvl_samps):
         ddq_bboxes = []
         ddq_scores = []
         ddq_dists = []
-        for mlvl_bboxes, mlvl_scores, mlvl_dists in zip(all_mlvl_bboxes, all_mlvl_scores, all_mlvl_dists):
+        ddq_samps = []
+        for mlvl_bboxes, mlvl_scores, mlvl_dists, mlvl_samps in zip(all_mlvl_bboxes, all_mlvl_scores, all_mlvl_dists, all_mlvl_samps):
             if mlvl_bboxes.numel() == 0:
                 return mlvl_bboxes, mlvl_scores
 
@@ -430,12 +450,12 @@ class DDQFCNVPDHead(AnchorFreeHead):
             ddq_bboxes.append(mlvl_bboxes[ddq_idxs])
             ddq_scores.append(mlvl_scores[ddq_idxs])
             ddq_dists.append(mlvl_dists[ddq_idxs])
-        return ddq_scores, ddq_bboxes, ddq_dists
+            ddq_samps.append(mlvl_samps[ddq_idxs])
+        return ddq_scores, ddq_bboxes, ddq_dists, ddq_samps
 
     def pre_dqs(self,
                 cls_scores_list=None,
                 bbox_preds_list=None,
-                bbox_lstds_list=None,
                 mlvl_priors=None,
                 img_metas=None,
                 **kwargs):
@@ -444,6 +464,7 @@ class DDQFCNVPDHead(AnchorFreeHead):
         all_cls_scores = []
         all_bbox_preds = []
         all_bbox_dists = []
+        all_bbox_samps = []
         all_query_ids = []
         for img_id in range(num_imgs):
 
@@ -453,35 +474,43 @@ class DDQFCNVPDHead(AnchorFreeHead):
             sinlge_bbox_pred_list = select_single_mlvl(bbox_preds_list,
                                                        img_id,
                                                        detach=False)
+            bbox_lstds_list = kwargs['bbox_lstds_list']
             sinlge_bbox_lstd_list = select_single_mlvl(bbox_lstds_list,
-                                                       img_id,
-                                                       detach=False)
-            cls_score, bbox_pred, bbox_dist, query_inds = self._get_topk(
-                single_cls_score_list, sinlge_bbox_pred_list, sinlge_bbox_lstd_list, mlvl_priors,
-                img_metas[img_id])
+                                                    img_id,
+                                                    detach=False)
+            bbox_samps_list = kwargs['bbox_samps_list']
+            sinlge_bbox_samp_list = select_single_mlvl(bbox_samps_list,
+                                                    img_id,
+                                                    detach=False)
+            cls_score, bbox_pred, bbox_dist, bbox_samp, query_inds = self._get_topk(
+                single_cls_score_list, sinlge_bbox_pred_list, sinlge_bbox_lstd_list, 
+                sinlge_bbox_samp_list, mlvl_priors, img_metas[img_id])
             all_cls_scores.append(cls_score)
             all_bbox_preds.append(bbox_pred)
-            all_bbox_dists.append(bbox_dist)
             all_query_ids.append(query_inds)
-        return all_cls_scores, all_bbox_preds, all_bbox_dists, all_query_ids
+            all_bbox_dists.append(bbox_dist)
+            all_bbox_samps.append(bbox_samp)
+        return all_cls_scores, all_bbox_preds, all_bbox_dists, all_bbox_samps, all_query_ids
 
-    def _get_topk(self, cls_score_list, bbox_pred_list, bbox_lstd_list, mlvl_priors, img_meta,
+    def _get_topk(self, cls_score_list, bbox_pred_list, bbox_lstd_list, bbox_samp_list, mlvl_priors, img_meta,
                   **kwargs):
-        mlvl_dists = []
         mlvl_bboxes = []
         mlvl_scores = []
+        mlvl_dists = []
+        mvlv_samps = []
         mlvl_query_inds = []
         start_inds = 0
-        for level_idx, (cls_score, bbox_pred, bbox_lstd, priors, stride) in \
-                enumerate(zip(cls_score_list, bbox_pred_list, bbox_lstd_list,
+        for level_idx, (cls_score, bbox_pred, bbox_lstd, bbox_samp, priors, stride) in \
+                enumerate(zip(cls_score_list, bbox_pred_list, bbox_lstd_list, bbox_samp_list,
                      mlvl_priors, \
                         self.prior_generator.strides)):
 
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
+            cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)
+
             bbox_lstd = bbox_lstd.permute(1, 2, 0).reshape(-1, 4)
-            cls_score = cls_score.permute(1, 2,
-                                          0).reshape(-1, self.num_classes)
+            bbox_samp = bbox_samp.permute(1, 2, 0).reshape(-1, 4)
 
             binary_cls_score = cls_score.max(-1).values.reshape(-1, 1)
             if self.dqs_cfg:
@@ -493,26 +522,28 @@ class DDQFCNVPDHead(AnchorFreeHead):
                     nms_pre = 1000
             results = filter_scores_and_topk(
                 binary_cls_score, 0, nms_pre,
-                dict(bbox_pred=bbox_pred, bbox_lstd=bbox_lstd, priors=priors, cls_score=cls_score))
+                dict(bbox_pred=bbox_pred, bbox_lstd=bbox_lstd, bbox_samp=bbox_samp, priors=priors, cls_score=cls_score))
             scores, labels, keep_idxs, filtered_results = results
             keep_idxs = keep_idxs + start_inds
             start_inds = start_inds + len(cls_score)
             bbox_pred = filtered_results['bbox_pred']
             bbox_lstd = filtered_results['bbox_lstd']
+            bbox_samp = filtered_results['bbox_samp']
             priors = filtered_results['priors']
             cls_score = filtered_results['cls_score']
-
             bbox_stride = torch.ones_like(scores).reshape(-1,1) * stride[0]
             bbox_dist = torch.cat([bbox_pred, bbox_lstd, priors, bbox_stride], axis=1)
-
             bbox_pred = bbox_pred.exp() * stride[0]
             bbox_pred = distance2bbox(priors, bbox_pred)
-            mlvl_dists.append(bbox_dist)
+            bbox_samp = bbox_samp.exp() * stride[0]
+            bbox_samp = distance2bbox(priors, bbox_samp)
             mlvl_bboxes.append(bbox_pred)
             mlvl_scores.append(cls_score)
+            mlvl_dists.append(bbox_dist)
+            mvlv_samps.append(bbox_samp)
             mlvl_query_inds.append(keep_idxs)
 
-        return torch.cat(mlvl_scores), torch.cat(mlvl_bboxes), torch.cat(mlvl_dists), torch.cat(
+        return torch.cat(mlvl_scores), torch.cat(mlvl_bboxes), torch.cat(mlvl_dists), torch.cat(mvlv_samps), torch.cat(
             mlvl_query_inds)
 
     def get_bboxes(self, cls_scores, bbox_preds, bbox_dists, img_metas=None, **kwargs):

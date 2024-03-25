@@ -34,17 +34,26 @@ model = dict(
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
         type='DDQFCNVPDHead',
-        with_vpd='aux',
+        train_with_vpd='main',
+        assign_with_vpd=True,
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
             nms_pre=1000,),
+        aux_loss=dict(
+            loss_dist=dict(
+                type='JD', 
+                project=(-5, 5, 21), 
+                scale_alpha=1.0, 
+                skew_beta=0.2),
+                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=8))),
         main_loss=dict(
             loss_dist=dict(
                 type='JD', 
                 project=(-5, 5, 21), 
                 scale_alpha=1.0, 
-                skew_beta=0.2)),
+                skew_beta=0.2),
+                train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=1))),
         strides=(8, 16, 32, 64, 128),
         num_classes=1,
         in_channels=256,

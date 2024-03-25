@@ -512,10 +512,21 @@ class DDQDETRHead(DINOHead):
         bbox_preds_list = [
             bbox_preds[i][batch_mask[i]] for i in range(num_imgs)
         ]
+        bbox_dists_list = [
+            bbox_dists[i][batch_mask[i]] for i in range(num_imgs)
+        ]
         cls_scores = torch.cat(cls_scores_list)
 
-        cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
-                                           batch_gt_instances, batch_img_metas)
+        if self.with_vpd:
+            bbox_means_list = [
+                bbox_dists[i][batch_mask[i]][:, :4] for i in range(num_imgs)
+            ]
+            cls_reg_targets = self.get_targets(cls_scores_list, bbox_means_list,
+                                                batch_gt_instances, batch_img_metas)
+        else:
+            cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
+                                                batch_gt_instances, batch_img_metas)
+            
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
          num_total_pos, num_total_neg) = cls_reg_targets
         labels = torch.cat(labels_list, 0)
@@ -568,11 +579,13 @@ class DDQDETRHead(DINOHead):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=num_total_pos)
         
         if self.with_vpd:
-            bbox_dists = bbox_dists.reshape(-1, 8)
+            bbox_dists = torch.cat(bbox_dists_list).reshape(-1, 8)
             bboxes_gt = inverse_sigmoid(bbox_targets)
+
             loss_dist = bbox_weights * self.regularization_loss(
-                bbox_dists, bbox_targets, self.loss_dist_cfg['type'], self.loss_dist_cfg['project'],
+                bbox_dists, bboxes_gt, self.loss_dist_cfg['type'], self.loss_dist_cfg['project'],
                 self.loss_dist_cfg['scale_alpha'], self.loss_dist_cfg['skew_beta'])
+
             eps = torch.finfo(torch.float32).eps
             loss_dist = loss_dist.sum() / (num_total_pos + eps)
             loss_bbox = loss_dist + loss_bbox
