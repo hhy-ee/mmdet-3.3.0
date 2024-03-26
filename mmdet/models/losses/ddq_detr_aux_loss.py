@@ -424,9 +424,7 @@ class DDQAuxVPDLoss(nn.Module):
         x2 = bbox_target[..., 2] - bbox_prior[..., 0]
         y2 = bbox_target[..., 3] - bbox_prior[..., 1]
 
-        bbox_target = torch.stack([x1, y1, x2, y2], -1)
-
-        bbox_target = torch.log((bbox_target / bbox_stride).clamp(min=EPS))
+        bbox_target = torch.stack([x1, y1, x2, y2], -1) / bbox_stride
 
         loss = weight * self.regularization_loss(
             bbox_mean, bbox_lstd, bbox_target,

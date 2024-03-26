@@ -122,13 +122,13 @@ class DDQFCNVPDHead(AnchorFreeHead):
         
         loss = dict()
         main_results, aux_results = self.forward(x)
-        
+
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs
         main_loss_inputs, aux_loss_inputs = self.get_inputs(
             main_results, aux_results, img_metas=batch_img_metas)
-        
+
         if self.train_with_vpd == 'main':
             aux_loss = self.aux_loss.loss(*aux_loss_inputs,
                 gt_bboxes=[item.bboxes for item in batch_gt_instances],
@@ -322,12 +322,12 @@ class DDQFCNVPDHead(AnchorFreeHead):
             bbox_lstds_list.append(std_dist)
             bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
 
-            main_results = dict(cls_scores_list=cls_scores_list,
-                                bbox_preds_list=bbox_preds_list,
-                                bbox_lstds_list=bbox_lstds_list,
-                                bbox_samps_list=bbox_samps_list,
-                                cls_feats=cls_feats,
-                                reg_feats=reg_feats)
+        main_results = dict(cls_scores_list=cls_scores_list,
+                            bbox_preds_list=bbox_preds_list,
+                            bbox_lstds_list=bbox_lstds_list,
+                            bbox_samps_list=bbox_samps_list,
+                            cls_feats=cls_feats,
+                            reg_feats=reg_feats)
         if self.training:
             cls_scores_list = []
             bbox_preds_list = []
@@ -532,10 +532,10 @@ class DDQFCNVPDHead(AnchorFreeHead):
             cls_score = filtered_results['cls_score']
             bbox_stride = torch.ones_like(scores).reshape(-1,1) * stride[0]
             bbox_dist = torch.cat([bbox_pred, bbox_lstd, priors, bbox_stride], axis=1)
-            bbox_pred = bbox_pred.exp() * stride[0]
-            bbox_pred = distance2bbox(priors, bbox_pred)
-            bbox_samp = bbox_samp.exp() * stride[0]
-            bbox_samp = distance2bbox(priors, bbox_samp)
+            bbox_pred = F.relu(bbox_pred) * stride[0]
+            bbox_pred = distance2bbox(priors, bbox_pred, img_meta['img_shape'])
+            bbox_samp = F.relu(bbox_samp) * stride[0]
+            bbox_samp = distance2bbox(priors, bbox_samp, img_meta['img_shape'])
             mlvl_bboxes.append(bbox_pred)
             mlvl_scores.append(cls_score)
             mlvl_dists.append(bbox_dist)
