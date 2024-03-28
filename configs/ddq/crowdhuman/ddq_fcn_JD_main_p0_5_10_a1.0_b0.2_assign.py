@@ -34,8 +34,8 @@ model = dict(
         upsample_cfg=dict(mode='bilinear', align_corners=False)),
     bbox_head=dict(
         type='DDQFCNVPDHead',
-        train_with_vpd='all',
-        assign_with_vpd=False,
+        train_with_vpd='main',
+        assign_with_vpd=True,
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
@@ -119,7 +119,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=8,
+    batch_size=2,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -180,11 +180,11 @@ param_scheduler = [
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=8e-4 * 0.5, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=2e-4 * 0.5, weight_decay=0.05),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1)}))
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # USER SHOULD NOT CHANGE ITS VALUES.
 # base_batch_size = (8 GPUs) x (2 samples per GPU)
-auto_scale_lr = dict(base_batch_size=8)
+auto_scale_lr = dict(base_batch_size=2)
