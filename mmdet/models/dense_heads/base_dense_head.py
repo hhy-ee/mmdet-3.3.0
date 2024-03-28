@@ -255,7 +255,10 @@ class BaseDenseHead(BaseModule, metaclass=ABCMeta):
             assert len(cls_scores) == len(score_factors)
 
         if self.with_1s_vpd:
-            bbox_preds = [item[0] for item in bbox_preds]
+            if self.training and self.nms_with_vpd:
+                bbox_preds = [item[0] for item in bbox_preds]
+            else:
+                bbox_preds = [item[1] for item in bbox_preds]
 
         num_levels = len(cls_scores)
 
