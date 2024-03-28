@@ -35,7 +35,7 @@ model = dict(
     bbox_head=dict(
         type='DDQFCNVPDHead',
         train_with_vpd='all',
-        assign_with_vpd=False,
+        assign_with_vpd=True,
         dqs_cfg=dict(
             type='nms',
             iou_threshold=0.7,
@@ -43,14 +43,14 @@ model = dict(
         aux_loss=dict(
             loss_dist=dict(
                 type='JD', 
-                project=(-5, 5, 21), 
+                project=(0, 10, 21), 
                 scale_alpha=1.0, 
                 skew_beta=0.2),
                 train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=8))),
         main_loss=dict(
             loss_dist=dict(
                 type='JD', 
-                project=(-5, 5, 21), 
+                project=(0, 10, 21), 
                 scale_alpha=1.0, 
                 skew_beta=0.2),
                 train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=1))),
@@ -156,7 +156,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # training schedule for 2x
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=37, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -171,7 +171,7 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=36,
+        end=37,
         by_epoch=True,
         milestones=[24, 33],
         gamma=0.1)

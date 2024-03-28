@@ -315,12 +315,12 @@ class DDQFCNVPDHead(AnchorFreeHead):
             cls_logits = conv_cls(cls_feat)
             object_nesss = conv_objectness(reg_feat)
             cls_score = sigmoid_geometric_mean(cls_logits, object_nesss)
-            reg_dist = scale(conv_reg(reg_feat)).float()
-            std_dist = scale(conv_std(reg_feat)).float()
+            reg_dist = scale(F.relu(conv_reg(reg_feat))).float()
+            std_dist = scale(F.relu(conv_std(reg_feat))).float()
             cls_scores_list.append(cls_score)
             bbox_preds_list.append(reg_dist)
             bbox_lstds_list.append(std_dist)
-            bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
+            bbox_samps_list.append(reg_dist + std_dist*torch.randn_like(reg_dist))
 
         main_results = dict(cls_scores_list=cls_scores_list,
                             bbox_preds_list=bbox_preds_list,
@@ -339,12 +339,12 @@ class DDQFCNVPDHead(AnchorFreeHead):
                 cls_logits = self.aux_conv_cls(cls_feat)
                 object_nesss = self.aux_conv_objectness(reg_feat)
                 cls_score = sigmoid_geometric_mean(cls_logits, object_nesss)
-                reg_dist = scale(self.aux_conv_reg(reg_feat)).float()
-                std_dist = scale(self.aux_conv_std(reg_feat)).float()
+                reg_dist = scale(F.relu(self.aux_conv_reg(reg_feat))).float()
+                std_dist = scale(F.relu(self.aux_conv_std(reg_feat))).float()
                 cls_scores_list.append(cls_score)
                 bbox_preds_list.append(reg_dist)
                 bbox_lstds_list.append(std_dist)
-                bbox_samps_list.append(reg_dist + std_dist.exp()*torch.randn_like(reg_dist))
+                bbox_samps_list.append(reg_dist + std_dist*torch.randn_like(reg_dist))
 
                 aux_results = dict(cls_scores_list=cls_scores_list,
                                     bbox_preds_list=bbox_preds_list,
@@ -532,9 +532,9 @@ class DDQFCNVPDHead(AnchorFreeHead):
             cls_score = filtered_results['cls_score']
             bbox_stride = torch.ones_like(scores).reshape(-1,1) * stride[0]
             bbox_dist = torch.cat([bbox_pred, bbox_lstd, priors, bbox_stride], axis=1)
-            bbox_pred = F.relu(bbox_pred) * stride[0]
+            bbox_pred = bbox_pred * stride[0]
             bbox_pred = distance2bbox(priors, bbox_pred, img_meta['img_shape'])
-            bbox_samp = F.relu(bbox_samp) * stride[0]
+            bbox_samp = bbox_samp * stride[0]
             bbox_samp = distance2bbox(priors, bbox_samp, img_meta['img_shape'])
             mlvl_bboxes.append(bbox_pred)
             mlvl_scores.append(cls_score)

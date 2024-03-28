@@ -50,7 +50,7 @@ model = dict(
         main_loss=dict(
             loss_dist=dict(
                 type='JD', 
-                project=(-5, 5, 21), 
+                project=(0, 5, 11), 
                 scale_alpha=1.0, 
                 skew_beta=0.2),
                 train_cfg=dict(assigner=dict(type='TopkHungarianAssigner', topk=1))),

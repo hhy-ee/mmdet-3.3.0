@@ -35,10 +35,10 @@ class DDQDETRHead(DINOHead):
     """
 
     def __init__(self, *args, aux_num_pos=4, **kwargs):
-        if 'with_vpd' in kwargs:
-            self.with_vpd = kwargs.pop('with_vpd')
-        if 'vi_mode' in kwargs:
-            self.vi_mode = kwargs.pop('vi_mode')
+        if 'train_with_vpd' in kwargs:
+            self.train_with_vpd = kwargs.pop('train_with_vpd')
+        if 'assign_with_vpd' in kwargs:
+            self.assign_with_mode = kwargs.pop('assign_with_vpd')
         if 'loss_dist' in kwargs:
             self.loss_dist_cfg = kwargs.pop('loss_dist')
 
@@ -87,10 +87,11 @@ class DDQDETRHead(DINOHead):
             for _ in range(self.num_pred_layer - 1)
         ])
 
-        if self.with_vpd:
+        if self.train_with_vpd:
             self.std_branches = nn.ModuleList([
-                    copy.deepcopy(self.reg_branches[-1]) for _ in range(self.num_pred_layer+1)
-                ])
+                copy.deepcopy(self.reg_branches[-1]) 
+                for _ in range(self.num_pred_layer + 1)
+            ])
             self.aux_std_branches = nn.ModuleList([
                 copy.deepcopy(self.reg_branches[-1])
                 for _ in range(self.num_pred_layer - 1)
