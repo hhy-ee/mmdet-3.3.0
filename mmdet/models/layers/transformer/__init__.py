@@ -5,6 +5,7 @@ from .dab_detr_layers import (DABDetrTransformerDecoder,
                               DABDetrTransformerDecoderLayer,
                               DABDetrTransformerEncoder)
 from .ddq_detr_layers import DDQTransformerDecoder
+from .ddq_vpd_detr_layers import DDQVPDTransformerDecoder
 from .deformable_detr_layers import (DeformableDetrTransformerDecoder,
                                      DeformableDetrTransformerDecoderLayer,
                                      DeformableDetrTransformerEncoder,
@@ -32,7 +33,7 @@ __all__ = [
     'DeformableDetrTransformerDecoderLayer', 'coordinate_to_encoding',
     'ConditionalAttention', 'DABDetrTransformerDecoderLayer',
     'DABDetrTransformerDecoder', 'DABDetrTransformerEncoder',
-    'DDQTransformerDecoder', 'ConditionalDetrTransformerDecoder',
+    'DDQTransformerDecoder', 'DDQVPDTransformerDecoder', 'ConditionalDetrTransformerDecoder',
     'ConditionalDetrTransformerDecoderLayer', 'DinoTransformerDecoder',
     'CdnQueryGenerator', 'Mask2FormerTransformerEncoder',
     'Mask2FormerTransformerDecoderLayer', 'Mask2FormerTransformerDecoder',

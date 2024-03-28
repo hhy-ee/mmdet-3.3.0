@@ -3,6 +3,7 @@ import copy
 from typing import Dict, List, Tuple
 
 import torch
+import numpy as np
 from mmengine.model import bias_init_with_prob, constant_init
 from torch import Tensor, nn
 
@@ -11,13 +12,14 @@ from mmdet.structures import SampleList
 from mmdet.structures.bbox import bbox_cxcywh_to_xyxy
 from mmdet.utils import InstanceList, OptInstanceList, reduce_mean
 from ..layers import inverse_sigmoid
-from ..losses import DDQAuxLoss
+from ..losses import DDQAuxLoss, DDQDETRAuxVPDLoss
 from ..utils import multi_apply
 from .dino_head import DINOHead
 
+EPS=1e-5
 
 @MODELS.register_module()
-class DDQDETRHead(DINOHead):
+class DDQDETRVPDHead(DINOHead):
     r"""Head of DDQDETR: Dense Distinct Query for
         End-to-End Object Detection.
 
@@ -33,17 +35,31 @@ class DDQDETRHead(DINOHead):
     """
 
     def __init__(self, *args, aux_num_pos=4, **kwargs):
-        super(DDQDETRHead, self).__init__(*args, **kwargs)
+        if 'train_with_vpd' in kwargs:
+            self.train_with_vpd = kwargs.pop('train_with_vpd')
+        if 'assign_with_vpd' in kwargs:
+            self.assign_with_vpd = kwargs.pop('assign_with_vpd')
+        if 'main_loss_dist' in kwargs:
+            self.main_loss_dist_cfg = kwargs.pop('main_loss_dist')
+        if 'aux_loss_dist' in kwargs:
+            self.aux_loss_dist_cfg = kwargs.pop('aux_loss_dist')
+
+        super(DDQDETRVPDHead, self).__init__(*args, **kwargs)
         self.aux_loss_for_dense = DDQAuxLoss(
             train_cfg=dict(
                 assigner=dict(type='TopkHungarianAssigner', topk=aux_num_pos),
                 alpha=1,
                 beta=6))
+        self.aux_vpd_loss_for_dense = DDQDETRAuxVPDLoss(
+            loss_dist=self.aux_loss_dist_cfg,
+            train_cfg=dict(
+                assigner=dict(type='TopkHungarianAssigner', topk=aux_num_pos),
+                alpha=1,beta=6))
 
     def _init_layers(self) -> None:
         """Initialize classification branch and regression branch of aux head
         for dense queries."""
-        super(DDQDETRHead, self)._init_layers()
+        super(DDQDETRVPDHead, self)._init_layers()
         # If decoder `num_layers` = 6 and `as_two_stage` = True, then:
         #   1) 6 main heads are required for
         #       each decoder output of distinct queries.
@@ -69,6 +85,16 @@ class DDQDETRHead(DINOHead):
             for _ in range(self.num_pred_layer - 1)
         ])
 
+        if self.train_with_vpd:
+            self.lstd_branches = nn.ModuleList([
+                copy.deepcopy(self.reg_branches[-1]) 
+                for _ in range(self.num_pred_layer + 1)
+            ])
+            self.aux_lstd_branches = nn.ModuleList([
+                copy.deepcopy(self.reg_branches[-1])
+                for _ in range(self.num_pred_layer - 1)
+            ])
+
     def init_weights(self) -> None:
         """Initialize weights of the Deformable DETR head."""
         bias_init = bias_init_with_prob(0.01)
@@ -80,15 +106,22 @@ class DDQDETRHead(DINOHead):
             constant_init(m[-1], 0, bias=0)
         for m in self.reg_branches:
             nn.init.constant_(m[-1].bias.data[2:], 0.0)
-
         for m in self.aux_reg_branches:
             constant_init(m[-1], 0, bias=0)
-
         for m in self.aux_reg_branches:
+            nn.init.constant_(m[-1].bias.data[2:], 0.0)
+        for m in self.lstd_branches:
+            constant_init(m[-1], 0, bias=0)
+        for m in self.lstd_branches:
+            nn.init.constant_(m[-1].bias.data[2:], 0.0)
+        for m in self.aux_lstd_branches:
+            constant_init(m[-1], 0, bias=0)
+        for m in self.aux_lstd_branches:
             nn.init.constant_(m[-1].bias.data[2:], 0.0)
 
     def forward(self, hidden_states: Tensor,
-                references: List[Tensor]) -> Tuple[Tensor]:
+                references: List[Tensor],
+                std_preds: List[Tensor],) -> Tuple[Tensor]:
         """Forward function.
 
         Args:
@@ -120,6 +153,7 @@ class DDQDETRHead(DINOHead):
         if self.training:
             num_dense = self.cache_dict['num_dense_queries']
         for layer_id in range(hidden_states.shape[0]):
+            tmp_std_preds = std_preds[layer_id]
             reference = inverse_sigmoid(references[layer_id])
             hidden_state = hidden_states[layer_id]
             if self.training:
@@ -128,6 +162,7 @@ class DDQDETRHead(DINOHead):
 
             outputs_class = self.cls_branches[layer_id](hidden_state)
             tmp_reg_preds = self.reg_branches[layer_id](hidden_state)
+
             if self.training:
                 dense_outputs_class = self.aux_cls_branches[layer_id](
                     dense_hidden_state)
@@ -143,8 +178,16 @@ class DDQDETRHead(DINOHead):
             else:
                 assert reference.shape[-1] == 2
                 tmp_reg_preds[..., :2] += reference
-            outputs_coord = tmp_reg_preds.sigmoid()
+            
+            if self.training:
+                outputs_coord = (tmp_reg_preds + tmp_std_preds * torch.randn_like(tmp_reg_preds)).sigmoid()
+            else:
+                outputs_coord = tmp_reg_preds.sigmoid()
+
             all_layers_outputs_classes.append(outputs_class)
+
+            if self.training:
+                outputs_coord = torch.cat((outputs_coord, tmp_reg_preds, tmp_std_preds), dim=-1)
             all_layers_outputs_coords.append(outputs_coord)
 
         all_layers_outputs_classes = torch.stack(all_layers_outputs_classes)
@@ -160,7 +203,8 @@ class DDQDETRHead(DINOHead):
              batch_data_samples: SampleList,
              dn_meta: Dict[str, int],
              aux_enc_outputs_class=None,
-             aux_enc_outputs_coord=None) -> dict:
+             aux_enc_outputs_coord=None,
+             **kwargs) -> dict:
         """Perform forward propagation and loss calculation of the detection
         head on the queries of the upstream network.
 
@@ -203,11 +247,12 @@ class DDQDETRHead(DINOHead):
         """
         batch_gt_instances = []
         batch_img_metas = []
+        std_preds = kwargs['refpoint_stds']
         for data_sample in batch_data_samples:
             batch_img_metas.append(data_sample.metainfo)
             batch_gt_instances.append(data_sample.gt_instances)
 
-        outs = self(hidden_states, references)
+        outs = self(hidden_states, references, std_preds)
         loss_inputs = outs + (enc_outputs_class, enc_outputs_coord,
                               batch_gt_instances, batch_img_metas, dn_meta)
         losses = self.loss_by_feat(*loss_inputs)
@@ -307,6 +352,8 @@ class DDQDETRHead(DINOHead):
             loss_dict['enc_loss_iou'] = enc_losses_iou
 
         if all_layers_denoising_cls_scores is not None:
+            if self.train_with_vpd:
+                all_layers_denoising_bbox_preds = all_layers_denoising_bbox_preds[..., :4]
             dn_losses_cls, dn_losses_bbox, dn_losses_iou = self.loss_dn(
                 all_layers_denoising_cls_scores,
                 all_layers_denoising_bbox_preds,
@@ -327,6 +374,8 @@ class DDQDETRHead(DINOHead):
             cls_scores = dense_all_layers_matching_cls_scores[l_id].sigmoid()
             bbox_preds = dense_all_layers_matching_bbox_preds[l_id]
 
+            bbox_dists = bbox_preds[..., 4:]
+            bbox_preds = bbox_preds[..., :4]
             bbox_preds = bbox_cxcywh_to_xyxy(bbox_preds)
             bbox_preds_list = []
             for img_id in range(len(bbox_preds)):
@@ -336,10 +385,23 @@ class DDQDETRHead(DINOHead):
                 det_bboxes[:, 1::2] = det_bboxes[:, 1::2] * img_shape[0]
                 bbox_preds_list.append(det_bboxes)
             bbox_preds = torch.stack(bbox_preds_list)
-            aux_loss = self.aux_loss_for_dense.loss(
-                cls_scores, bbox_preds,
-                [item.bboxes for item in batch_gt_instances],
-                [item.labels for item in batch_gt_instances], batch_img_metas)
+
+            if self.train_with_vpd=='all' or self.train_with_vpd=='aux':
+                aux_loss = self.aux_vpd_loss_for_dense.loss(
+                    cls_scores, bbox_preds, bbox_dists, self.assign_with_vpd,
+                    [item.bboxes for item in batch_gt_instances],
+                    [item.labels for item in batch_gt_instances], batch_img_metas)
+            else:
+                aux_loss = self.aux_loss_for_dense.loss(
+                    cls_scores, bbox_preds,
+                    [item.bboxes for item in batch_gt_instances],
+                    [item.labels for item in batch_gt_instances], batch_img_metas)
+            
+            # aux_loss = self.aux_loss_for_dense.loss(
+            #         cls_scores, bbox_preds,
+            #         [item.bboxes for item in batch_gt_instances],
+            #         [item.labels for item in batch_gt_instances], batch_img_metas)
+
             for k, v in aux_loss.items():
                 loss_dict[f'{l_id}_aux_{k}'] = v
 
@@ -429,6 +491,12 @@ class DDQDETRHead(DINOHead):
             `loss_iou`.
         """
         num_imgs = cls_scores.size(0)
+
+        if self.train_with_vpd=='all' or self.train_with_vpd=='main':
+            bbox_means = bbox_preds[..., 4:8].sigmoid()
+            bbox_dists = bbox_preds[..., 4:]
+        bbox_preds = bbox_preds[..., :4]
+
         if 0 < l_id:
             batch_mask = [
                 self.cache_dict['distinct_query_mask'][l_id - 1][
@@ -448,10 +516,21 @@ class DDQDETRHead(DINOHead):
         bbox_preds_list = [
             bbox_preds[i][batch_mask[i]] for i in range(num_imgs)
         ]
+        bbox_means_list = [
+            bbox_means[i][batch_mask[i]] for i in range(num_imgs)
+        ]
+        bbox_dists_list = [
+            bbox_dists[i][batch_mask[i]] for i in range(num_imgs)
+        ]
         cls_scores = torch.cat(cls_scores_list)
 
-        cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
-                                           batch_gt_instances, batch_img_metas)
+        if self.assign_with_vpd:
+            cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
+                                                batch_gt_instances, batch_img_metas)
+        else:
+            cls_reg_targets = self.get_targets(cls_scores_list, bbox_means_list,
+                                                batch_gt_instances, batch_img_metas)
+            
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
          num_total_pos, num_total_neg) = cls_reg_targets
         labels = torch.cat(labels_list, 0)
@@ -502,8 +581,54 @@ class DDQDETRHead(DINOHead):
         # regression L1 loss
         loss_bbox = self.loss_bbox(
             bbox_preds, bbox_targets, bbox_weights, avg_factor=num_total_pos)
+        
+        if self.train_with_vpd=='all' or self.train_with_vpd=='main':
+            bbox_dists = torch.cat(bbox_dists_list).reshape(-1, 8)
+            bboxes_gt = inverse_sigmoid(bbox_targets)
+
+            loss_dist = bbox_weights * self.regularization_loss(
+                bbox_dists, bboxes_gt, 
+                self.main_loss_dist_cfg['type'], 
+                self.main_loss_dist_cfg['project'], 
+                self.main_loss_dist_cfg['scale_alpha'], 
+                self.main_loss_dist_cfg['skew_beta'])
+
+            eps = torch.finfo(torch.float32).eps
+            loss_dist = loss_dist.sum() / (num_total_pos + eps)
+            loss_bbox = loss_dist + loss_bbox
+
         return loss_cls, loss_bbox, loss_iou
 
+    def regularization_loss(self, dist, target, metric, project, scale_alpha, skew_beta):
+        project = np.linspace(project[0], project[1], project[2])
+        scale = (project.shape[0] - 1) / (project[-1] - project[0])
+        acc = 1 / scale / 2
+        target = (target.reshape(-1) - project[0]) * scale
+        target = target.clamp(min=EPS, max=(project[-1]-project[0]) * scale-EPS)
+        idx_left = target.long()
+        idx_right = idx_left + 1
+        weight_left = idx_right.float() - target
+        weight_right = target - idx_left.float()
+        # target distribution
+        target_dist = weight_left.new_full((weight_left.shape[0], \
+            project.shape[0]), 0, dtype=torch.float32)
+        target_dist[torch.arange(target_dist.shape[0]), idx_left] = weight_left
+        target_dist[torch.arange(target_dist.shape[0]), idx_right] = weight_right
+        # predict distribution
+        mean = dist[..., :4].reshape(-1, 1)
+        std = dist[..., 4:].reshape(-1, 1)
+        Qg = torch.distributions.normal.Normal(mean, std)
+        project = torch.tensor(project).type_as(mean).repeat(mean.shape[0],1)
+        pred_dist = Qg.cdf(project + acc) - Qg.cdf(project - acc)
+        # distribution distance
+        if metric == 'JD':
+            total_dist = pred_dist * (1 - skew_beta) + target_dist * skew_beta
+            kl_p = pred_dist * torch.log((pred_dist + 1e-6) / (total_dist + 1e-6))
+            total_dist = pred_dist * skew_beta  + target_dist * (1 - skew_beta)
+            kl_q = target_dist * torch.log((target_dist + 1e-6) / (total_dist + 1e-6))
+            loss = (kl_p + kl_q) / 2
+        return loss.sum(1).reshape(-1, 4) * scale_alpha
+    
     def predict_by_feat(self,
                         layer_cls_scores: Tensor,
                         layer_bbox_preds: Tensor,
